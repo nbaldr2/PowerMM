@@ -1,5 +1,6 @@
 # PowerMTA installation packages (served statically, not committed)
 PowerMTA5.0r8_ALMALINUX/
+PowerMTA5.zip
 *.rpm
 
 # Logs

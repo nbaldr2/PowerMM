@@ -67,6 +67,17 @@ sshpass -p "$VPS_PASSWORD" ssh $SSH_OPTS -p $VPS_PORT "$VPS_USER@$VPS_HOST" \
     "cd $DEPLOY_PATH && git clone $GIT_REPO . 2>/dev/null || git pull origin master" 2>/dev/null
 echo "Done"
 
+echo "[6.1/10] Uploading PowerMTA5.zip (if present)..."
+if [[ -f "./PowerMTA5.zip" ]]; then
+    sshpass -p "$VPS_PASSWORD" ssh $SSH_OPTS -p $VPS_PORT "$VPS_USER@$VPS_HOST" \
+        "mkdir -p $DEPLOY_PATH/PowerMTA5.0r8_ALMALINUX" 2>/dev/null
+    sshpass -p "$VPS_PASSWORD" scp -P "$VPS_PORT" $SSH_OPTS "./PowerMTA5.zip" \
+        "$VPS_USER@$VPS_HOST:$DEPLOY_PATH/PowerMTA5.0r8_ALMALINUX/PowerMTA5.zip" 2>/dev/null
+    echo "Uploaded"
+else
+    echo "Skipped (PowerMTA5.zip not found locally)"
+fi
+
 echo "[7/10] Installing server dependencies..."
 sshpass -p "$VPS_PASSWORD" ssh $SSH_OPTS -p $VPS_PORT "$VPS_USER@$VPS_HOST" \
     "cd $DEPLOY_PATH/server && npm install --production 2>&1 | tail -3" 2>/dev/null

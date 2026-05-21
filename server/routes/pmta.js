@@ -201,30 +201,45 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     }
 
     send('Installing system dependencies...');
-    await sshExecSafe('yum install -y openssl curl wget 2>/dev/null || dnf install -y openssl curl wget', 120000);
+    await sshExecSafe('yum install -y openssl curl wget unzip 2>/dev/null || dnf install -y openssl curl wget unzip', 120000);
     send('Dependencies installed');
 
     send('Creating PowerMTA directories...');
-    await sshExecSafe('mkdir -p /root/PMTA /etc/pmta/keys /var/spool/pmta /var/log/pmta');
+    await sshExecSafe('rm -rf /root/PMTA && mkdir -p /root/PMTA /etc/pmta/keys /var/spool/pmta /var/log/pmta');
     send('Directories created');
 
-    send('Downloading PowerMTA RPM packages...');
     const apiBase = `${req.protocol}://${req.get('host')}`;
-    const rpmUrls = [
-      `${apiBase}/pmta-files/PowerMTA-5.0r8.rpm`,
-      `${apiBase}/pmta-files/PowerMTA-api-5.0r8.rpm`,
-      `${apiBase}/pmta-files/PowerMTA-snmp-5.0r8.rpm`,
-    ];
-    for (const [i, url] of rpmUrls.entries()) {
-      const filename = url.split('/').pop();
-      send(`Downloading ${filename}...`);
-      await sshExecSafe(`curl -sL "${url}" -o /root/PMTA/${filename}`, 60000);
-    }
-    send('RPM packages downloaded');
+    const zipUrl = `${apiBase}/pmta-files/PowerMTA5.zip`;
+    send('Checking PowerMTA package source...');
+    const { stdout: zipHttpCode } = await sshExecSafe(`curl -sSL -o /dev/null -w "%{http_code}" -I "${zipUrl}" || echo 000`, 20000);
+    const zipAvailable = (zipHttpCode || '').trim().startsWith('200');
 
-    send('Installing PowerMTA RPM packages...');
-    await sshExecSafe('rpm -ivh /root/PMTA/PowerMTA-5.0r8.rpm /root/PMTA/PowerMTA-api-5.0r8.rpm /root/PMTA/PowerMTA-snmp-5.0r8.rpm 2>&1 || true', 120000);
-    send('RPM packages installed');
+    if (zipAvailable) {
+      send('Downloading PowerMTA5.zip from server...');
+      await sshExecSafe(`curl -sSL "${zipUrl}" -o /root/PowerMTA5.zip`, 120000);
+
+      send('Extracting PowerMTA5.zip...');
+      await sshExecSafe('cd /root/PMTA && (unzip -o /root/PowerMTA5.zip >/dev/null 2>&1 || (command -v bsdtar >/dev/null 2>&1 && bsdtar -xf /root/PowerMTA5.zip -C /root/PMTA))', 120000);
+
+      send('Installing PowerMTA RPM package(s)...');
+      await sshExecSafe(`RPM_LIST=$(find /root/PMTA -maxdepth 6 -type f -name '*.rpm' | tr '\n' ' '); if [ -n "$RPM_LIST" ]; then rpm -ivh $RPM_LIST 2>&1 || true; else echo "No RPM files found in PowerMTA5.zip"; fi`, 180000);
+      send('PowerMTA package installed from zip');
+    } else {
+      send('PowerMTA5.zip not found on server. Falling back to RPM downloads...');
+      const rpmUrls = [
+        `${apiBase}/pmta-files/PowerMTA-5.0r8.rpm`,
+        `${apiBase}/pmta-files/PowerMTA-api-5.0r8.rpm`,
+        `${apiBase}/pmta-files/PowerMTA-snmp-5.0r8.rpm`,
+      ];
+      for (const url of rpmUrls) {
+        const filename = url.split('/').pop();
+        send(`Downloading ${filename}...`);
+        await sshExecSafe(`curl -sSL "${url}" -o /root/PMTA/${filename}`, 60000);
+      }
+      send('Installing PowerMTA RPM packages...');
+      await sshExecSafe('rpm -ivh /root/PMTA/PowerMTA-5.0r8.rpm /root/PMTA/PowerMTA-api-5.0r8.rpm /root/PMTA/PowerMTA-snmp-5.0r8.rpm 2>&1 || true', 120000);
+      send('RPM packages installed');
+    }
 
     send('Stopping existing PowerMTA services...');
     await sshExecSafe('service pmta stop 2>/dev/null || true');
@@ -234,8 +249,8 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
 
     send('Patching PowerMTA binaries...');
     await sshExecSafe('rm -f /usr/sbin/pmtad /usr/sbin/pmtahttpd');
-    await sshExecSafe('cp /root/PMTA/usr/sbin/* /usr/sbin/ 2>/dev/null || true');
-    await sshExecSafe('chmod +x /usr/sbin/pmtad /usr/sbin/pmtahttpd 2>/dev/null || true');
+    await sshExecSafe("find /root/PMTA -maxdepth 6 -type f \\( -name pmtad -o -name pmtahttpd \\) -exec cp -f {} /usr/sbin/ \\; 2>/dev/null || true");
+    await sshExecSafe('chmod 755 /usr/sbin/pmtad /usr/sbin/pmtahttpd 2>/dev/null || true');
     send('Binaries patched');
 
     send('Writing license file...');
