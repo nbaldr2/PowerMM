@@ -61,6 +61,20 @@ router.post('/test-ssh', authenticate, authorize('admin'), async (req, res) => {
 });
 
 // POST /pmta/config — save PMTA configuration
+router.get('/install-test', async (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+  for (let i = 1; i <= 5; i++) {
+    res.write(`data: {"msg":"test${i}"}\n\n`);
+  }
+  res.end();
+});
+// POST /pmta/config — save PMTA configuration
 router.post('/config', authenticate, authorize('admin'), validate(schemas.pmtaConfig), async (req, res) => {
   const d = req.validated;
   const passEncrypted = d.smtp_pass ? encrypt(d.smtp_pass) : null;
