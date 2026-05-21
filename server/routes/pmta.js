@@ -308,19 +308,36 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     send('Configuring firewall...');
     const smtpPort = Number(config.smtp_port || 2525);
     const monitorPort = Number(config.monitor_port || 1983);
-    const firewallCmd = `
+const firewallCmd = `
 if command -v firewall-cmd >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-port=25/tcp >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-port=80/tcp >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-port=443/tcp >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-port=587/tcp >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-port=465/tcp >/dev/null 2>&1 || true
   firewall-cmd --permanent --add-port=${smtpPort}/tcp >/dev/null 2>&1 || true
   firewall-cmd --permanent --add-port=${monitorPort}/tcp >/dev/null 2>&1 || true
   firewall-cmd --reload >/dev/null 2>&1 || true
   echo firewalld
 elif command -v ufw >/dev/null 2>&1; then
+  ufw allow 25/tcp >/dev/null 2>&1 || true
+  ufw allow 80/tcp >/dev/null 2>&1 || true
+  ufw allow 443/tcp >/dev/null 2>&1 || true
+  ufw allow 587/tcp >/dev/null 2>&1 || true
+  ufw allow 465/tcp >/dev/null 2>&1 || true
   ufw allow ${smtpPort}/tcp >/dev/null 2>&1 || true
   ufw allow ${monitorPort}/tcp >/dev/null 2>&1 || true
   ufw reload >/dev/null 2>&1 || true
   echo ufw
 else
-  echo none
+  iptables -I INPUT -p tcp --dport 25 -j ACCEPT 2>/dev/null || true
+  iptables -I INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+  iptables -I INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+  iptables -I INPUT -p tcp --dport 587 -j ACCEPT 2>/dev/null || true
+  iptables -I INPUT -p tcp --dport 465 -j ACCEPT 2>/dev/null || true
+  iptables -I INPUT -p tcp --dport ${smtpPort} -j ACCEPT 2>/dev/null || true
+  iptables -I INPUT -p tcp --dport ${monitorPort} -j ACCEPT 2>/dev/null || true
+  echo iptables
 fi
 `.trim().replace(/\n/g, '; ');
     const { stdout: fw } = await sshExecSafe(firewallCmd, 30000);
