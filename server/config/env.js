@@ -43,6 +43,9 @@ const env = {
   // File storage
   UPLOAD_DIR: process.env.UPLOAD_DIR || './uploads',
   MAX_UPLOAD_SIZE: parseInt(process.env.MAX_UPLOAD_SIZE || '52428800', 10), // 50MB
+
+  PMTA_LICENSE_PATH: process.env.PMTA_LICENSE_PATH || '',
+  PMTA_LICENSE_CONTENT: process.env.PMTA_LICENSE_CONTENT || '',
 };
 
 export default env;

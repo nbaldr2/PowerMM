@@ -764,7 +764,6 @@ ${DEFAULT_HTML_BODY}`
   const [pmtaSmtpPass, setPmtaSmtpPass] = useState('P@ssw0rd2026_Secure')
   const [pmtaSmtpPort, setPmtaSmtpPort] = useState(2525)
   const [pmtaMonitorPort, setPmtaMonitorPort] = useState(1983)
-  const [pmtaLicense, setPmtaLicense] = useState('')
 
   const [showDnsModal, setShowDnsModal] = useState(false)
 
@@ -937,7 +936,6 @@ domain-key {{ domain }}, {{ dkim_selector }}, /etc/pmta/keys/{{ domain }}.{{ dki
         monitor_port: pmtaMonitorPort,
         config_text: pmtaConfigCode,
         isp_rules: ispRules,
-        pmta_license: pmtaLicense
       }
 
       if (sshKeyAuth) {
@@ -3064,16 +3062,6 @@ ${getCompiledHtml()}`}
                         </span>
                       </div>
                     </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-brand-text-bright">PowerMTA License</label>
-                      <textarea
-                        value={pmtaLicense}
-                        onChange={(e) => setPmtaLicense(e.target.value)}
-                        className="w-full h-28 bg-brand-bg border border-brand-border rounded-lg p-2.5 text-xs font-mono text-white focus:outline-none"
-                        placeholder="Paste your PowerMTA license file contents here"
-                      />
-                    </div>
                   </div>
                 </div>
               )}
@@ -3174,7 +3162,6 @@ ${getCompiledHtml()}`}
                               monitor_port: pmtaMonitorPort,
                               config_text: pmtaConfigCode,
                               isp_rules: ispRules,
-                              pmta_license: pmtaLicense
                             });
                             alert('Configuration saved to server.');
                           } catch (err) { alert('Failed to save config: ' + err.message); }

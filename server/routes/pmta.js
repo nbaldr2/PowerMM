@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { Client as SSHClient } from 'ssh2';
 import { query } from '../config/database.js';
+import env from '../config/env.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { validate, schemas } from '../middleware/validate.js';
 import { encrypt, decrypt } from '../utils/encryption.js';
 import crypto from 'crypto';
 import forge from 'node-forge';
 import logger from '../utils/logger.js';
+import fs from 'fs/promises';
 
 const router = Router();
 
@@ -73,8 +75,8 @@ router.post('/config', authenticate, authorize('admin'), validate(schemas.pmtaCo
   const { rows } = await query(
     `INSERT INTO pmta_configs (user_id, server_name, ssh_host, ssh_port, ssh_user, domain, hostname,
        primary_ip, secondary_ips, dkim_selector, dkim_private_key, dkim_public_key,
-       smtp_user, smtp_pass_encrypted, smtp_port, monitor_port, config_text, isp_rules, pmta_license)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       smtp_user, smtp_pass_encrypted, smtp_port, monitor_port, config_text, isp_rules)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      ON CONFLICT (user_id) DO UPDATE SET
        server_name = EXCLUDED.server_name,
        ssh_host = EXCLUDED.ssh_host,
@@ -93,14 +95,13 @@ router.post('/config', authenticate, authorize('admin'), validate(schemas.pmtaCo
        monitor_port = EXCLUDED.monitor_port,
        config_text = EXCLUDED.config_text,
        isp_rules = EXCLUDED.isp_rules,
-       pmta_license = EXCLUDED.pmta_license,
        updated_at = NOW()
      RETURNING *`,
     [req.user.id, d.server_name || 'Default', d.ssh_host, d.ssh_port, d.ssh_user,
      d.domain, d.hostname || d.domain, d.primary_ip, d.secondary_ips || '',
      d.dkim_selector, privateKeyPem, publicKeyBase64,
      d.smtp_user || '', passEncrypted, d.smtp_port, d.monitor_port,
-     d.config_text || '', JSON.stringify(d.isp_rules || []), d.pmta_license || null]
+     d.config_text || '', JSON.stringify(d.isp_rules || [])]
   );
 
   res.status(201).json({ config: rows[0], dkimPublicKey: publicKeyBase64 });
@@ -238,20 +239,17 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     send('Binaries patched');
 
     send('Writing license file...');
-    const licenseContent = config.pmta_license || `product: PowerMTA
-version: 5.0
-platform: linux-intel
-units: 4294967295
-options: H,enterprise-plus,no-passive-audit
-mac:
-licensee: [LICENSEE]
-serial: [SERIAL]
-comment: PowerMTA v5.0 installation
-issued: 2024-01-01
-expires: never
-copyright: Port25 Solutions, Inc.  All Rights Reserved
-check: [CHECK]`;
-    await sshExecSafe(`cat > /etc/pmta/license << 'LICENSEEOF'\n${licenseContent}\nLICENSEEOF`);
+    let licenseContent = '';
+    if (env.PMTA_LICENSE_PATH) {
+      licenseContent = await fs.readFile(env.PMTA_LICENSE_PATH, 'utf8');
+    } else if (env.PMTA_LICENSE_CONTENT) {
+      licenseContent = env.PMTA_LICENSE_CONTENT;
+    }
+    if (!licenseContent.trim()) {
+      throw new Error('Missing PowerMTA license. Set PMTA_LICENSE_PATH or PMTA_LICENSE_CONTENT on the API server.');
+    }
+    const licenseDelimiter = `LICENSEEOF_${crypto.randomBytes(8).toString('hex')}`;
+    await sshExecSafe(`cat > /etc/pmta/license << '${licenseDelimiter}'\n${licenseContent}\n${licenseDelimiter}`);
     send('License installed');
 
     send('Generating DKIM keypair...');
@@ -299,6 +297,27 @@ check: [CHECK]`;
     await sshExecSafe('service pmta start 2>&1 || pmtad 2>&1 &', 30000);
     await sshExecSafe('service pmtahttp start 2>&1 || pmtahttpd 2>&1 &', 15000);
     send('PowerMTA service started');
+
+    send('Configuring firewall...');
+    const smtpPort = Number(config.smtp_port || 2525);
+    const monitorPort = Number(config.monitor_port || 1983);
+    const firewallCmd = `
+if command -v firewall-cmd >/dev/null 2>&1; then
+  firewall-cmd --permanent --add-port=${smtpPort}/tcp >/dev/null 2>&1 || true
+  firewall-cmd --permanent --add-port=${monitorPort}/tcp >/dev/null 2>&1 || true
+  firewall-cmd --reload >/dev/null 2>&1 || true
+  echo firewalld
+elif command -v ufw >/dev/null 2>&1; then
+  ufw allow ${smtpPort}/tcp >/dev/null 2>&1 || true
+  ufw allow ${monitorPort}/tcp >/dev/null 2>&1 || true
+  ufw reload >/dev/null 2>&1 || true
+  echo ufw
+else
+  echo none
+fi
+`.trim().replace(/\n/g, '; ');
+    const { stdout: fw } = await sshExecSafe(firewallCmd, 30000);
+    send(`Firewall updated (${(fw || '').trim() || 'unknown'})`);
 
     send('Verifying service status...');
     const { stdout: pidCheck } = await sshExecSafe('pgrep -f pmtad || echo "not running"');

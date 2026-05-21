@@ -130,7 +130,6 @@ export const schemas = {
     monitor_port: z.number().int().default(1983),
     config_text: z.string().optional(),
     isp_rules: z.array(z.any()).optional(),
-    pmta_license: z.string().optional(),
   }),
 
   webhook: z.object({
