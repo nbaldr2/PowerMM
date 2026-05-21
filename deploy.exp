@@ -1,0 +1,121 @@
+#!/usr/bin/expect -f
+
+# PowerMM Deployment Expect Script
+# Usage: ./deploy.exp [password]
+#   or  export VPS_PASSWORD='yourpassword' && ./deploy.exp
+#
+# This script deploys PowerMM to the main VPS at 109.71.254.177
+#
+# Requirements:
+#   - expect (brew install expect / apt install expect)
+#   - SSH key access or password authentication enabled on VPS
+#   - GitHub repo accessible from VPS (or git credentials configured)
+
+set VPS_HOST "109.71.254.177"
+set VPS_USER "root"
+set VPS_PORT "22"
+set DEPLOY_PATH "/var/www/powermm"
+set GIT_REPO "https://github.com/nbaldr2/PowerMM.git"
+set VPS_PASSWORD ""
+
+if {[llength $argv] > 0} {
+    set VPS_PASSWORD [lindex $argv 0]
+} elseif {[info exists env(VPS_PASSWORD)]} {
+    set VPS_PASSWORD $env(VPS_PASSWORD)
+} else {
+    send_user "\nUsage: $argv0 <password>  OR  export VPS_PASSWORD=<password> $argv0\n\n"
+    exit 1
+}
+
+send_user "\n==========================================\n"
+send_user " PowerMM Deployment to $VPS_HOST\n"
+send_user "==========================================\n\n"
+
+set timeout 30
+spawn ssh -o StrictHostKeyChecking=no -p $VPS_PORT $VPS_USER@$VPS_HOST
+
+expect {
+    "password:" {
+        send "$VPS_PASSWORD\r"
+    }
+    "Permission denied" {
+        send_user "ERROR: Invalid password\n"
+        exit 1
+    }
+    timeout {
+        send_user "ERROR: SSH connection timeout\n"
+        exit 1
+    }
+    eof {
+        send_user "ERROR: Connection closed unexpectedly\n"
+        exit 1
+    }
+}
+
+# Wait for shell prompt
+expect -re {\$|#} { }
+
+send_user "\n[1/8] Connected. Updating system packages...\n"
+send "export DEBIAN_FRONTEND=noninteractive && apt-get update -qq && apt-get upgrade -y -qq 2>/dev/null || yum update -y -qq 2>/dev/null || dnf update -y -qq 2>/dev/null &\r"
+expect -re {\$|#} { }
+
+send "cd /\r"
+expect -re {\$|#} { }
+
+send_user "\n[2/8] Installing Node.js 20.x...\n"
+send "curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - 2>/dev/null || curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null\r"
+expect -re {\$|#} { timeout 60 }
+expect -re {\$|#} { }
+
+send "yum install -y nodejs 2>/dev/null || apt-get install -y nodejs 2>/dev/null || dnf install -y nodejs 2>/dev/null\r"
+expect -re {\$|#} { timeout 60 }
+expect -re {\$|#} { }
+
+send_user "\n[3/8] Installing PMTA dependencies (openssl, curl, wget)...\n"
+send "yum install -y openssl curl wget 2>/dev/null || apt-get install -y openssl curl wget 2>/dev/null || dnf install -y openssl curl wget 2>/dev/null\r"
+expect -re {\$|#} { timeout 60 }
+expect -re {\$|#} { }
+
+send_user "\n[4/8] Creating deployment directory...\n"
+send "mkdir -p $DEPLOY_PATH && cd $DEPLOY_PATH\r"
+expect -re {\$|#} { }
+
+send_user "\n[5/8] Cloning repository...\n"
+send "git clone $GIT_REPO . 2>/dev/null || (git pull && git checkout master)\r"
+expect -re {\$|#} { timeout 120 }
+expect -re {\$|#} { }
+
+send_user "\n[6/8] Installing Node.js dependencies...\n"
+send "npm install 2>&1 | tail -5\r"
+expect -re {\$|#} { timeout 300 }
+expect -re {\$|#} { }
+
+send_user "\n[7/8] Running database migrations...\n"
+send "cd server && npm install 2>/dev/null && node migrations/run.js\r"
+expect {
+    "All migrations complete" { }
+    "Migration" { send_user "Migration output above\n" }
+    -re {\$|#} { }
+    timeout { send_user "WARNING: Migration timed out\n" }
+}
+
+send_user "\n[8/8] Building frontend...\n"
+send "cd /root/powermm && npm run build 2>&1 | tail -5\r"
+expect -re {\$|#} { timeout 120 }
+expect -re {\$|#} { }
+
+send_user "\n==========================================\n"
+send_user " Deployment completed!\n"
+send_user "==========================================\n"
+send_user "\nNext steps:\n"
+send_user "  1. Configure environment variables in $DEPLOY_PATH/.env\n"
+send_user "  2. Copy PowerMTA5.0r8_ALMALINUX files to the server\n"
+send_user "  3. Start the server: pm2 start server/index.js --name powermm\n"
+send_user "  4. Configure nginx reverse proxy\n"
+send_user "\n"
+
+send "exit\r"
+expect eof
+
+send_user "\nDisconnected from $VPS_HOST\n"
+exit 0
