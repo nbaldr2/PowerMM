@@ -61,6 +61,25 @@ router.post('/test-ssh', authenticate, authorize('admin'), async (req, res) => {
 });
 
 // POST /pmta/config — save PMTA configuration
+router.get('/sse-test', async (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+  logger.debug('SSE-TEST: headers sent, starting events');
+  res.write('data: {"msg":"event1"}\n\n');
+  setTimeout(() => {
+    res.write('data: {"msg":"event2"}\n\n');
+  }, 300);
+  setTimeout(() => {
+    res.write('data: {"msg":"event3"}\n\n');
+    res.end();
+  }, 600);
+});
+// POST /pmta/config — save PMTA configuration
 router.post('/config', authenticate, authorize('admin'), validate(schemas.pmtaConfig), async (req, res) => {
   const d = req.validated;
   const passEncrypted = d.smtp_pass ? encrypt(d.smtp_pass) : null;
