@@ -28,6 +28,7 @@ import spamCheckRoutes from './routes/spamcheck.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+app.set('trust proxy', true);
 const httpServer = createServer(app);
 
 // ============================================================

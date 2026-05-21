@@ -265,7 +265,11 @@ class ApiClient {
   async installPmta() {
     // Returns SSE stream
     return fetch(`${API_BASE}/pmta/install`, {
-      method: 'POST', headers: { Authorization: `Bearer ${this.accessToken}` },
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        Accept: 'text/event-stream',
+      },
     });
   }
 

@@ -990,7 +990,9 @@ domain-key {{ domain }}, {{ dkim_selector }}, /etc/pmta/keys/{{ domain }}.{{ dki
               setServerIp(sshHost)
               setMailOk(true)
             }
-          } catch (e) { }
+          } catch (parseErr) {
+            setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] PARSE ERROR: ${parseErr.message}`])
+          }
         }
       }
     } catch (err) {
