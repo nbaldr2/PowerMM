@@ -47,7 +47,11 @@ app.use(compression({
   },
 }));
 app.use(cors({
-  origin: [env.APP_URL, 'http://localhost:5173', 'http://localhost:3000'],
+  origin: (origin, callback) => {
+    const allowed = [env.APP_URL, 'http://localhost:5173', 'http://localhost:3000', 'http://109.71.254.177'];
+    if (!origin || allowed.includes(origin) || origin.startsWith('http://109.71.254.177')) return callback(null, true);
+    return callback(null, allowed[0]);
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: '50mb' }));
