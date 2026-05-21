@@ -174,7 +174,9 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
   const send = (payload) => {
     const body = (typeof payload === 'string') ? { message: payload } : (payload || {});
-    res.write(`data: ${JSON.stringify({ timestamp: new Date().toISOString(), ...body })}\n\n`);
+    const msg = JSON.stringify({ timestamp: new Date().toISOString(), ...body });
+    logger.debug(`SSE send: ${msg.substring(0, 200)}`);
+    res.write(`data: ${msg}\n\n`);
     if (typeof res.flush === 'function') res.flush();
   };
   const keepAlive = setInterval(() => {
