@@ -55,14 +55,14 @@ expect {
 # Wait for shell prompt
 expect -re {\$|#} { }
 
-send_user "\n[1/8] Connected. Updating system packages...\n"
+send_user "\n\\[1/8\\] Connected. Updating system packages...\n"
 send "export DEBIAN_FRONTEND=noninteractive && apt-get update -qq && apt-get upgrade -y -qq 2>/dev/null || yum update -y -qq 2>/dev/null || dnf update -y -qq 2>/dev/null &\r"
 expect -re {\$|#} { }
 
 send "cd /\r"
 expect -re {\$|#} { }
 
-send_user "\n[2/8] Installing Node.js 20.x...\n"
+send_user "\n\\[2/8\\] Installing Node.js 20.x...\n"
 send "curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - 2>/dev/null || curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null\r"
 expect -re {\$|#} { timeout 60 }
 expect -re {\$|#} { }
@@ -71,26 +71,26 @@ send "yum install -y nodejs 2>/dev/null || apt-get install -y nodejs 2>/dev/null
 expect -re {\$|#} { timeout 60 }
 expect -re {\$|#} { }
 
-send_user "\n[3/8] Installing PMTA dependencies (openssl, curl, wget)...\n"
+send_user "\n\\[3/8\\] Installing PMTA dependencies (openssl, curl, wget)...\n"
 send "yum install -y openssl curl wget 2>/dev/null || apt-get install -y openssl curl wget 2>/dev/null || dnf install -y openssl curl wget 2>/dev/null\r"
 expect -re {\$|#} { timeout 60 }
 expect -re {\$|#} { }
 
-send_user "\n[4/8] Creating deployment directory...\n"
+send_user "\n\\[4/8\\] Creating deployment directory...\n"
 send "mkdir -p $DEPLOY_PATH && cd $DEPLOY_PATH\r"
 expect -re {\$|#} { }
 
-send_user "\n[5/8] Cloning repository...\n"
+send_user "\n\\[5/8\\] Cloning repository...\n"
 send "git clone $GIT_REPO . 2>/dev/null || (git pull && git checkout master)\r"
 expect -re {\$|#} { timeout 120 }
 expect -re {\$|#} { }
 
-send_user "\n[6/8] Installing Node.js dependencies...\n"
+send_user "\n\\[6/8\\] Installing Node.js dependencies...\n"
 send "npm install 2>&1 | tail -5\r"
 expect -re {\$|#} { timeout 300 }
 expect -re {\$|#} { }
 
-send_user "\n[7/8] Running database migrations...\n"
+send_user "\n\\[7/8\\] Running database migrations...\n"
 send "cd server && npm install 2>/dev/null && node migrations/run.js\r"
 expect {
     "All migrations complete" { }
@@ -99,8 +99,8 @@ expect {
     timeout { send_user "WARNING: Migration timed out\n" }
 }
 
-send_user "\n[8/8] Building frontend...\n"
-send "cd /root/powermm && npm run build 2>&1 | tail -5\r"
+send_user "\n\\[8/8\\] Building frontend...\n"
+send "cd $DEPLOY_PATH && npm run build 2>&1 | tail -5\r"
 expect -re {\$|#} { timeout 120 }
 expect -re {\$|#} { }
 
