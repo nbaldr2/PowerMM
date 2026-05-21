@@ -38,7 +38,13 @@ app.use(helmet({
   contentSecurityPolicy: false, // Allow inline scripts for tracking pixel
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
-app.use(compression());
+app.use(compression({
+  filter: (req, res) => {
+    const accept = req.headers.accept || '';
+    if (accept.includes('text/event-stream')) return false;
+    return compression.filter(req, res);
+  },
+}));
 app.use(cors({
   origin: [env.APP_URL, 'http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
