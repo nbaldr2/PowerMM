@@ -28,7 +28,7 @@ function sshExec(conn, command) {
 }
 
 // POST /pmta/test-ssh — test SSH connection
-router.post('/test-ssh', async (req, res) => {
+router.post('/test-ssh', authenticate, authorize('admin'), async (req, res) => {
   const { host, port, username, password, privateKey, useLocalServer } = req.body;
   if (useLocalServer) return res.json({ success: true, message: 'Local server mode — no SSH needed' });
   if (!host) return res.status(400).json({ error: 'SSH host required' });

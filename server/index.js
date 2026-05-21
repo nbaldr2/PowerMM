@@ -53,6 +53,9 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
+// Trust the nginx reverse proxy so X-Forwarded-For headers are accepted
+app.set('trust proxy', true);
+
 // Global rate limiting
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
