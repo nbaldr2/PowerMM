@@ -5,6 +5,7 @@ import env from '../config/env.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { validate, schemas } from '../middleware/validate.js';
 import { encrypt, decrypt } from '../utils/encryption.js';
+import { emitToUser } from '../socket/index.js';
 import crypto from 'crypto';
 import forge from 'node-forge';
 import logger from '../utils/logger.js';
@@ -165,37 +166,14 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
   if (rows.length === 0) return res.status(400).json({ error: 'No PMTA config saved. Complete Step 2 first.' });
   const config = rows[0];
 
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  if (typeof res.flushHeaders === 'function') res.flushHeaders();
-  if (res.socket) {
-    res.socket.setNoDelay(true);
-    res.socket.setKeepAlive(true, 5000);
-  }
+  // Respond immediately — progress is sent via Socket.io
+  res.json({ message: 'Installation started. Watch progress via live events.' });
+
   const send = (payload) => {
     const body = (typeof payload === 'string') ? { message: payload } : (payload || {});
-    const msg = JSON.stringify({ timestamp: new Date().toISOString(), ...body });
-    logger.debug(`SSE send: ${msg.substring(0, 200)}`);
-    try {
-      res.write(`data: ${msg}\n\n`);
-      if (typeof res.flush === 'function') res.flush();
-    } catch (e) {
-      logger.error('SSE write error:', e.message);
-    }
+    logger.debug(`PMTA progress to user ${req.user.id}: ${(body.message || '').substring(0, 200)}`);
+    emitToUser(req.user.id, 'pmta:progress', { ...body });
   };
-  // Send immediate welcome event
-  send('SSE connection established');
-  const keepAlive = setInterval(() => {
-    try {
-      res.write(': keepalive\n\n');
-      if (typeof res.flush === 'function') res.flush();
-    } catch {}
-  }, 10000);
-  req.on('close', () => clearInterval(keepAlive));
 
   const sshExecSafe = async (cmd, timeout = 60000) => {
     return new Promise((resolve, reject) => {
@@ -405,11 +383,7 @@ fi | grep -E ':(${smtpPort}|${monitorPort})' || echo "Ports not yet bound"
   } catch (err) {
     send({ message: `Error: ${err.message}`, success: false, done: true });
     logger.error('PMTA install error:', err);
-  } finally {
-    clearInterval(keepAlive);
   }
-
-  res.end();
 });
 
 // POST /pmta/uninstall
