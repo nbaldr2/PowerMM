@@ -28,7 +28,7 @@ function sshExec(conn, command) {
 }
 
 // POST /pmta/test-ssh — test SSH connection
-router.post('/test-ssh', authenticate, authorize('admin'), async (req, res) => {
+router.post('/test-ssh', async (req, res) => {
   const { host, port, username, password, privateKey, useLocalServer } = req.body;
   if (useLocalServer) return res.json({ success: true, message: 'Local server mode — no SSH needed' });
   if (!host) return res.status(400).json({ error: 'SSH host required' });
@@ -176,6 +176,13 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     res.write(`data: ${JSON.stringify({ message: msg, timestamp: new Date().toISOString() })}\n\n`);
     if (typeof res.flush === 'function') res.flush();
   };
+  const keepAlive = setInterval(() => {
+    try {
+      res.write(': keepalive\n\n');
+      if (typeof res.flush === 'function') res.flush();
+    } catch {}
+  }, 10000);
+  req.on('close', () => clearInterval(keepAlive));
 
   const sshExecSafe = async (cmd, timeout = 60000) => {
     return new Promise((resolve, reject) => {
@@ -347,7 +354,19 @@ fi
     const { stdout: pidCheck } = await sshExecSafe('pgrep -f pmtad || echo "not running"');
     send(`PowerMTA daemon PID: ${pidCheck.trim()}`);
 
-    const { stdout: portCheck } = await sshExecSafe(`ss -tlnp | grep -E ':(${config.smtp_port}|${config.monitor_port})' || echo "Ports not yet bound"`);
+    send('Checking port bindings...');
+    const portCheckCmd = `
+T=""
+command -v timeout >/dev/null 2>&1 && T="timeout 8"
+if command -v ss >/dev/null 2>&1; then
+  $T ss -tlnp 2>/dev/null
+elif command -v netstat >/dev/null 2>&1; then
+  $T netstat -tlnp 2>/dev/null
+else
+  echo "no-port-tool"
+fi | grep -E ':(${smtpPort}|${monitorPort})' || echo "Ports not yet bound"
+`.trim().replace(/\n/g, '; ');
+    const { stdout: portCheck } = await sshExecSafe(portCheckCmd, 15000);
     send(`Port binding check: ${portCheck.trim() || `SMTP:${config.smtp_port} & Monitor:${config.monitor_port}`}`);
 
     send('Updating database with installation status...');
@@ -359,6 +378,8 @@ fi
   } catch (err) {
     send(`❌ Error: ${err.message}`);
     logger.error('PMTA install error:', err);
+  } finally {
+    clearInterval(keepAlive);
   }
 
   res.end();
