@@ -222,7 +222,7 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
       await sshExecSafe('cd /root/PMTA && (unzip -o /root/PowerMTA5.zip >/dev/null 2>&1 || (command -v bsdtar >/dev/null 2>&1 && bsdtar -xf /root/PowerMTA5.zip -C /root/PMTA))', 120000);
 
       send('Installing PowerMTA RPM package(s)...');
-      await sshExecSafe(`RPM_LIST=$(find /root/PMTA -maxdepth 6 -type f -name '*.rpm' | tr '\n' ' '); if [ -n "$RPM_LIST" ]; then rpm -ivh $RPM_LIST 2>&1 || true; else echo "No RPM files found in PowerMTA5.zip"; fi`, 180000);
+      await sshExecSafe(`cd /root/PMTA && find . -maxdepth 3 -type f -name 'PowerMTA-5.0r8*.rpm' -exec rpm -ivh {} \\; 2>&1 || true`, 180000);
       send('PowerMTA package installed from zip');
     } else {
       send('PowerMTA5.zip not found on server. Falling back to RPM downloads...');
@@ -249,22 +249,14 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
 
     send('Patching PowerMTA binaries...');
     await sshExecSafe('rm -f /usr/sbin/pmtad /usr/sbin/pmtahttpd');
-    await sshExecSafe("find /root/PMTA -maxdepth 6 -type f \\( -name pmtad -o -name pmtahttpd \\) -exec cp -f {} /usr/sbin/ \\; 2>/dev/null || true");
-    await sshExecSafe('chmod 755 /usr/sbin/pmtad /usr/sbin/pmtahttpd 2>/dev/null || true');
+    await sshExecSafe("find /root/PMTA -type f \\( -name pmtad -o -name pmtahttpd \\) -exec cp -f {} /usr/sbin/ \\; 2>/dev/null || true");
+    await sshExecSafe('chmod -R 777 /usr/sbin/pmta 2>/dev/null || true');
+    await sshExecSafe('chmod -R 777 /usr/sbin/pmtad 2>/dev/null || true');
+    await sshExecSafe('chmod -R 777 /usr/sbin/pmtahttpd 2>/dev/null || true');
     send('Binaries patched');
 
-    send('Writing license file...');
-    let licenseContent = '';
-    if (env.PMTA_LICENSE_PATH) {
-      licenseContent = await fs.readFile(env.PMTA_LICENSE_PATH, 'utf8');
-    } else if (env.PMTA_LICENSE_CONTENT) {
-      licenseContent = env.PMTA_LICENSE_CONTENT;
-    }
-    if (!licenseContent.trim()) {
-      throw new Error('Missing PowerMTA license. Set PMTA_LICENSE_PATH or PMTA_LICENSE_CONTENT on the API server.');
-    }
-    const licenseDelimiter = `LICENSEEOF_${crypto.randomBytes(8).toString('hex')}`;
-    await sshExecSafe(`cat > /etc/pmta/license << '${licenseDelimiter}'\n${licenseContent}\n${licenseDelimiter}`);
+    send('Installing license file from package...');
+    await sshExecSafe("find /root/PMTA -type f -name 'license' -exec cp -f {} /etc/pmta/license \\; 2>/dev/null || true");
     send('License installed');
 
     send('Generating DKIM keypair...');
