@@ -28,7 +28,7 @@ import spamCheckRoutes from './routes/spamcheck.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-app.set('trust proxy', true);
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
 
 // ============================================================
@@ -55,7 +55,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
 // Trust the nginx reverse proxy so X-Forwarded-For headers are accepted
-app.set('trust proxy', true);
+// Set to 1 (single nginx proxy) to avoid express-rate-limit validation error
+app.set('trust proxy', 1);
 
 // Global rate limiting
 app.use(rateLimit({
