@@ -19,7 +19,7 @@ GIT_REPO="https://github.com/nbaldr2/PowerMM.git"
 
 if [[ -z "$VPS_PASSWORD" ]]; then
     echo "ERROR: VPS_PASSWORD environment variable not set."
-    echo "Usage: VPS_PASSWORD='yourpass' ./deploy.sh"
+    echo "Usage: VPS_PASSWORD='<yourpass>' ./deploy.sh"
     exit 1
 fi
 

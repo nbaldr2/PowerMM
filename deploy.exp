@@ -2,7 +2,7 @@
 
 # PowerMM Deployment Expect Script
 # Usage: ./deploy.exp [password]
-#   or  export VPS_PASSWORD='yourpassword' && ./deploy.exp
+#   or  export VPS_PASSWORD='<yourpass>' && ./deploy.exp
 #
 # This script deploys PowerMM to the main VPS at 109.71.254.177
 #
@@ -23,7 +23,7 @@ if {[llength $argv] > 0} {
 } elseif {[info exists env(VPS_PASSWORD)]} {
     set VPS_PASSWORD $env(VPS_PASSWORD)
 } else {
-    send_user "\nUsage: $argv0 <password>  OR  export VPS_PASSWORD=<password> $argv0\n\n"
+    send_user "\nUsage: export VPS_PASSWORD='<yourpass>' && ./$argv0\n\n"
     exit 1
 }
 
