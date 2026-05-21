@@ -917,9 +917,13 @@ domain-key {{ domain }}, {{ dkim_selector }}, /etc/pmta/keys/{{ domain }}.{{ dki
     setInstallSuccess(false)
 
     try {
-      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Authenticating with API...`])
+      // Step 1: Establish SSH session first (required before install)
+      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Testing SSH connection...`])
+      await testSshConnection()
+      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] SSH connection ready`])
 
-      // Save config first
+      // Step 2: Save config
+      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Authenticating with API...`])
       const config = {
         server_name: 'Primary Node',
         ssh_host: sshHost,
