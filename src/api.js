@@ -263,14 +263,9 @@ class ApiClient {
   }
 
   async installPmta() {
-    // Connect directly to Express on port 3001 to bypass nginx SSE buffering
-    const directUrl = `${window.location.protocol}//${window.location.hostname}:3001/pmta/install`;
-    return fetch(directUrl, {
+    return this.request('/pmta/install', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        Accept: 'text/event-stream',
-      },
+      headers: { Accept: 'text/event-stream' },
     });
   }
 

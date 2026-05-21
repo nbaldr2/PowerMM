@@ -952,29 +952,14 @@ domain-key {{ domain }}, {{ dkim_selector }}, /etc/pmta/keys/{{ domain }}.{{ dki
       setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Config saved to database. Triggering remote installation...`])
 
       const res = await api.installPmta()
-      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] SSE status: ${res.status} ${res.statusText}`])
       if (!res.ok) throw new Error('Failed to start installation process')
 
       const reader = res.body.getReader()
-      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] SSE reader ready, waiting for events...`])
       const decoder = new TextDecoder()
       let buffer = ''
-      let readerDone = false
-      const overallTimeout = setTimeout(() => {
-        setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Installation timed out after 8 minutes`])
-        reader.cancel()
-      }, 480000)
 
       while (true) {
-        const readTimeout = setTimeout(() => {
-          setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] No data from stream for 120s, cancelling...`])
-          reader.cancel()
-          readerDone = true
-        }, 120000)
         const { done, value } = await reader.read()
-        clearTimeout(readTimeout)
-        if (readerDone) break
-        if (done) { clearTimeout(overallTimeout); break }
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
@@ -1004,9 +989,7 @@ domain-key {{ domain }}, {{ dkim_selector }}, /etc/pmta/keys/{{ domain }}.{{ dki
               setServerIp(sshHost)
               setMailOk(true)
             }
-          } catch (parseErr) {
-            setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] PARSE ERROR: ${parseErr.message}`])
-          }
+          } catch (e) { }
         }
       }
     } catch (err) {
