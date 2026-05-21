@@ -61,20 +61,6 @@ router.post('/test-ssh', authenticate, authorize('admin'), async (req, res) => {
 });
 
 // POST /pmta/config — save PMTA configuration
-router.get('/install-test', async (req, res) => {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  res.flushHeaders();
-  for (let i = 1; i <= 5; i++) {
-    res.write(`data: {"msg":"test${i}"}\n\n`);
-  }
-  res.end();
-});
-// POST /pmta/config — save PMTA configuration
 router.post('/config', authenticate, authorize('admin'), validate(schemas.pmtaConfig), async (req, res) => {
   const d = req.validated;
   const passEncrypted = d.smtp_pass ? encrypt(d.smtp_pass) : null;
@@ -186,13 +172,23 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     'X-Accel-Buffering': 'no',
   });
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  if (res.socket) {
+    res.socket.setNoDelay(true);
+    res.socket.setKeepAlive(true, 5000);
+  }
   const send = (payload) => {
     const body = (typeof payload === 'string') ? { message: payload } : (payload || {});
     const msg = JSON.stringify({ timestamp: new Date().toISOString(), ...body });
     logger.debug(`SSE send: ${msg.substring(0, 200)}`);
-    res.write(`data: ${msg}\n\n`);
-    if (typeof res.flush === 'function') res.flush();
+    try {
+      res.write(`data: ${msg}\n\n`);
+      if (typeof res.flush === 'function') res.flush();
+    } catch (e) {
+      logger.error('SSE write error:', e.message);
+    }
   };
+  // Send immediate welcome event
+  send('SSE connection established');
   const keepAlive = setInterval(() => {
     try {
       res.write(': keepalive\n\n');
