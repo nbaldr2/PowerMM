@@ -953,27 +953,40 @@ domain-key {{ domain }}, {{ dkim_selector }}, /etc/pmta/keys/{{ domain }}.{{ dki
       // Read SSE stream
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
+      let buffer = ''
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\\n\\n')
+        buffer += decoder.decode(value, { stream: true })
+        buffer = buffer.replace(/\\r\\n/g, '\\n')
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.substring(6))
-              setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString(undefined, { timeZone: 'UTC' }) || new Date().toLocaleTimeString()}] ${data.message}`])
+        let sepIndex
+        while ((sepIndex = buffer.indexOf('\\n\\n')) !== -1) {
+          const rawEvent = buffer.slice(0, sepIndex)
+          buffer = buffer.slice(sepIndex + 2)
 
-              if (data.message.includes('completed successfully')) {
-                setInstallSuccess(true)
-                setServerIp(sshHost)
-                setMailOk(true)
-              }
-            } catch (e) { }
-          }
+          const dataLines = rawEvent
+            .split('\\n')
+            .filter(l => l.startsWith('data:'))
+            .map(l => l.replace(/^data:\\s?/, ''))
+
+          if (dataLines.length === 0) continue
+
+          try {
+            const data = JSON.parse(dataLines.join('\\n'))
+            if (data?.message) {
+              setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${data.message}`])
+            }
+
+            const isSuccess = data?.success === true || (typeof data?.message === 'string' && data.message.includes('completed successfully'))
+            if (isSuccess) {
+              setInstallSuccess(true)
+              setServerIp(sshHost)
+              setMailOk(true)
+            }
+          } catch (e) { }
         }
       }
     } catch (err) {

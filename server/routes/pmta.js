@@ -172,8 +172,9 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     'X-Accel-Buffering': 'no',
   });
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
-  const send = (msg) => {
-    res.write(`data: ${JSON.stringify({ message: msg, timestamp: new Date().toISOString() })}\n\n`);
+  const send = (payload) => {
+    const body = (typeof payload === 'string') ? { message: payload } : (payload || {});
+    res.write(`data: ${JSON.stringify({ timestamp: new Date().toISOString(), ...body })}\n\n`);
     if (typeof res.flush === 'function') res.flush();
   };
   const keepAlive = setInterval(() => {
@@ -186,11 +187,25 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
 
   const sshExecSafe = async (cmd, timeout = 60000) => {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Command timeout: ${cmd.substring(0, 50)}...`)), timeout);
+      let streamRef = null;
+      let finished = false;
+      const timer = setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        try { streamRef?.close?.(); } catch {}
+        try { streamRef?.end?.(); } catch {}
+        reject(new Error(`Command timeout: ${cmd.substring(0, 50)}...`));
+      }, timeout);
       conn.exec(cmd, (err, stream) => {
-        if (err) { clearTimeout(timer); return reject(err); }
+        streamRef = stream;
+        if (err) { clearTimeout(timer); finished = true; return reject(err); }
         let stdout = '', stderr = '';
-        stream.on('close', (code) => { clearTimeout(timer); resolve({ stdout, stderr, code }); });
+        stream.on('close', (code) => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(timer);
+          resolve({ stdout, stderr, code });
+        });
         stream.on('data', (d) => { stdout += d.toString(); });
         stream.stderr.on('data', (d) => { stderr += d.toString(); });
       });
@@ -372,11 +387,11 @@ fi | grep -E ':(${smtpPort}|${monitorPort})' || echo "Ports not yet bound"
     send('Updating database with installation status...');
     await query("UPDATE pmta_configs SET status = 'installed', installed_at = NOW(), dkim_public_key = $1 WHERE id = $2", [pubKey, config.id]);
 
-    send('✅ PowerMTA installation completed successfully!');
-    send('📋 Next steps: Configure your DNS records (SPF, DKIM, DMARC, PTR) before sending.');
+    send({ message: 'PowerMTA installation completed successfully!', success: true, done: true });
+    send({ message: 'Next steps: Configure your DNS records (SPF, DKIM, DMARC, PTR) before sending.', success: true });
 
   } catch (err) {
-    send(`❌ Error: ${err.message}`);
+    send({ message: `Error: ${err.message}`, success: false, done: true });
     logger.error('PMTA install error:', err);
   } finally {
     clearInterval(keepAlive);
