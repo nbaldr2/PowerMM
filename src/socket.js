@@ -19,6 +19,10 @@ class SocketClient {
       reconnectionAttempts: 10,
     });
 
+    for (const [event, callbacks] of this.listeners.entries()) {
+      callbacks.forEach(cb => this.socket.on(event, cb));
+    }
+
     this.socket.on('connect', () => {
       console.log('🔌 Socket connected:', this.socket.id);
     });
@@ -49,18 +53,29 @@ class SocketClient {
   }
 
   on(event, callback) {
-    if (!this.socket) return;
-    this.socket.on(event, callback);
     if (!this.listeners.has(event)) this.listeners.set(event, []);
     this.listeners.get(event).push(callback);
+    if (this.socket) {
+      this.socket.on(event, callback);
+    }
   }
 
   off(event, callback) {
-    if (!this.socket) return;
+    if (this.socket) {
+      if (callback) {
+        this.socket.off(event, callback);
+      } else {
+        this.socket.removeAllListeners(event);
+      }
+    }
+
+    if (!this.listeners.has(event)) return;
     if (callback) {
-      this.socket.off(event, callback);
+      const arr = this.listeners.get(event).filter(cb => cb !== callback);
+      if (arr.length > 0) this.listeners.set(event, arr);
+      else this.listeners.delete(event);
     } else {
-      this.socket.removeAllListeners(event);
+      this.listeners.delete(event);
     }
   }
 

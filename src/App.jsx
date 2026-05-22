@@ -97,6 +97,27 @@ function App() {
     return () => socketClient.disconnect()
   }, [])
 
+  useEffect(() => {
+    const handlePmtaProgress = (payload) => {
+      if (!payload) return
+      const message = typeof payload === 'string'
+        ? payload
+        : (payload.message || JSON.stringify(payload))
+      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`])
+      if (payload.done) {
+        if (payload.success) {
+          setInstallSuccess(true)
+          setMailOk(true)
+        } else {
+          setInstallSuccess(false)
+        }
+      }
+    }
+
+    socketClient.on('pmta:progress', handlePmtaProgress)
+    return () => socketClient.off('pmta:progress', handlePmtaProgress)
+  }, [])
+
   // ---------------------------------------------------------
   // COMPOSE STATE
   // ---------------------------------------------------------
@@ -916,14 +937,14 @@ domain-key {{ domain }}, {{ dkim_selector }}, /etc/pmta/keys/{{ domain }}.{{ dki
     setInstallLogs([])
     setInstallSuccess(false)
 
-    try {
-      // Step 1: Establish SSH session first (required before install)
-      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Testing SSH connection...`])
-      await testSshConnection()
-      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] SSH connection ready`])
+    const now = () => new Date().toLocaleTimeString()
 
-      // Step 2: Save config
-      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Authenticating with API...`])
+    try {
+      setInstallLogs(prev => [...prev, `[${now()}] Testing SSH connection...`])
+      await testSshConnection()
+      setInstallLogs(prev => [...prev, `[${now()}] SSH connection ready`])
+
+      setInstallLogs(prev => [...prev, `[${now()}] Authenticating with API...`])
       const config = {
         server_name: 'Primary Node',
         ssh_host: sshHost,
@@ -945,49 +966,12 @@ domain-key {{ domain }}, {{ dkim_selector }}, /etc/pmta/keys/{{ domain }}.{{ dki
       }
 
       await api.savePmtaConfig(config)
-      setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Config saved to database. Triggering remote installation...`])
+      setInstallLogs(prev => [...prev, `[${now()}] Config saved to database. Triggering remote installation...`])
 
-      const res = await api.installPmta()
-      if (!res.ok) throw new Error('Failed to start installation process')
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        buffer = buffer.replace(/\\r\\n/g, '\\n')
-
-        let sepIndex
-        while ((sepIndex = buffer.indexOf('\\n\\n')) !== -1) {
-          const rawEvent = buffer.slice(0, sepIndex)
-          buffer = buffer.slice(sepIndex + 2)
-
-          const dataLines = rawEvent
-            .split('\\n')
-            .filter(l => l.startsWith('data:'))
-            .map(l => l.replace(/^data:\\s?/, ''))
-
-          if (dataLines.length === 0) continue
-
-          try {
-            const data = JSON.parse(dataLines.join('\\n'))
-            if (data?.message) {
-              setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${data.message}`])
-            }
-
-            const isSuccess = data?.success === true || (typeof data?.message === 'string' && data.message.includes('completed successfully'))
-            if (isSuccess) {
-              setInstallSuccess(true)
-              setServerIp(sshHost)
-              setMailOk(true)
-            }
-          } catch (e) { }
-        }
-      }
+      const response = await api.installPmta()
+      const startMessage = response?.message || 'Installation started.'
+      setInstallLogs(prev => [...prev, `[${now()}] ${startMessage}`])
+      setInstallLogs(prev => [...prev, `[${now()}] Waiting for live progress updates...`])
     } catch (err) {
       setInstallLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ERROR: ${err.message}`])
     } finally {
