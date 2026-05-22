@@ -929,6 +929,8 @@ domain-key {{ domain }}, {{ dkim_selector }}, /etc/pmta/keys/{{ domain }}.{{ dki
         ssh_host: sshHost,
         ssh_port: sshPort,
         ssh_user: sshUser,
+        ssh_password: sshKeyAuth ? undefined : sshPass,
+        ssh_private_key: sshKeyAuth ? sshPass : undefined,
         domain: sendingDomain,
         hostname: pmtaHostname,
         primary_ip: pmtaPrimaryIp,
@@ -940,12 +942,6 @@ domain-key {{ domain }}, {{ dkim_selector }}, /etc/pmta/keys/{{ domain }}.{{ dki
         monitor_port: pmtaMonitorPort,
         config_text: pmtaConfigCode,
         isp_rules: ispRules,
-      }
-
-      if (sshKeyAuth) {
-        config.privateKey = sshPass
-      } else {
-        config.password = sshPass
       }
 
       await api.savePmtaConfig(config)
