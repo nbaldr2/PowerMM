@@ -585,6 +585,9 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     configText = configText.replace(/\{\{\s*dkim_selector\s*\}\}/g, config.dkim_selector || 'dkim');
     configText = configText.replace(/\{\{\s*monitor_port\s*\}\}/g, String(config.monitor_port || 1983));
 
+    configText = configText.replace('{{ SECONDARY_VMTA_BLOCKS }}', '');
+    configText = configText.replace('{{ SECONDARY_VMTA_POOL_ENTRIES }}', '');
+
     if (config.secondary_ips) {
       const secIps = config.secondary_ips.split('\n').map(i => i.trim()).filter(Boolean);
       let vmtaBlocks = '';
@@ -594,8 +597,10 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
         vmtaBlocks += `\n<virtual-mta ${vmtaName}>\n    smtp-source-ip ${ip}\n</virtual-mta>\n`;
         poolEntries += `    add-vmta ${vmtaName}\n`;
       });
-      configText = configText.replace('{{ SECONDARY_VMTA_BLOCKS }}', vmtaBlocks);
-      configText = configText.replace('{{ SECONDARY_VMTA_POOL_ENTRIES }}', poolEntries ? `\n<virtual-mta-pool pool>\n${poolEntries}</virtual-mta-pool>` : '');
+      configText = configText + vmtaBlocks;
+      if (poolEntries) {
+        configText += `\n<virtual-mta-pool pool>\n${poolEntries}</virtual-mta-pool>\n`;
+      }
     }
 
     await sshExecSafe(`cat > /etc/pmta/config << 'CONFIGEOF'\n${configText}\nCONFIGEOF`);
