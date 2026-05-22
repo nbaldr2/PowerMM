@@ -566,7 +566,7 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     send('License installed');
 
     send('Generating DKIM keypair...');
-    const dkimPath = `/etc/pmta/keys/${config.domain}.${config.dkim_selector}.pem`;
+    const dkimPath = `/etc/pmta/keys/${config.domain}.pem`;
     await sshExecSafe(`mkdir -p /etc/pmta/keys`);
     await sshExecSafe(`openssl genrsa -out ${dkimPath} 2048 2>&1`);
     await sshExecSafe(`chmod 600 ${dkimPath}`);
@@ -578,9 +578,12 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     configText = configText.replace(/\{\{\s*domain\s*\}\}/g, config.domain);
     configText = configText.replace(/\{\{\s*hostname\s*\}\}/g, config.hostname || config.domain);
     configText = configText.replace(/\{\{\s*primary_ip\s*\}\}/g, config.primary_ip);
+    configText = configText.replace(/\{\{\s*PRIMARY_IP\s*\}\}/g, config.primary_ip);
     configText = configText.replace(/\{\{\s*ip\s*\}\}/g, config.primary_ip);
     configText = configText.replace(/\{\{\s*smtp_user\s*\}\}/g, config.smtp_user || '');
+    configText = configText.replace(/\{\{\s*SMTP_USERNAME\s*\}\}/g, config.smtp_user || '');
     configText = configText.replace(/\{\{\s*smtp_pass\s*\}\}/g, config.smtp_pass_encrypted ? decrypt(config.smtp_pass_encrypted) : '');
+    configText = configText.replace(/\{\{\s*SMTP_PASSWORD\s*\}\}/g, config.smtp_pass_encrypted ? decrypt(config.smtp_pass_encrypted) : '');
     configText = configText.replace(/\{\{\s*smtp_port\s*\}\}/g, String(config.smtp_port || 2525));
     configText = configText.replace(/\{\{\s*dkim_selector\s*\}\}/g, config.dkim_selector || 'dkim');
     configText = configText.replace(/\{\{\s*monitor_port\s*\}\}/g, String(config.monitor_port || 1983));
