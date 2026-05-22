@@ -10,9 +10,11 @@ import crypto from 'crypto';
 import forge from 'node-forge';
 import logger from '../utils/logger.js';
 import fs from 'fs/promises';
-import { createReadStream } from 'fs';
+import { createReadStream, createWriteStream } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import http from 'http';
+import https from 'https';
 
 const router = Router();
 
@@ -119,6 +121,87 @@ function uploadFileViaSftp(conn, localPath, remotePath) {
       readStream.pipe(writeStream);
     });
   });
+}
+
+function downloadFileToPath(url, destPath, timeoutMs = 180000) {
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith('https') ? https : http;
+    const tmpPath = `${destPath}.partial-${Date.now()}`;
+
+    const request = client.get(url, { timeout: timeoutMs }, (response) => {
+      if (response.statusCode && response.statusCode >= 400) {
+        response.resume();
+        fs.rm(tmpPath, { force: true }).catch(() => {});
+        reject(new Error(`Download failed with status ${response.statusCode}`));
+        return;
+      }
+
+      const fileStream = createWriteStream(tmpPath);
+
+      const cleanup = (err) => {
+        fileStream.destroy();
+        fs.rm(tmpPath, { force: true }).catch(() => {});
+        reject(err);
+      };
+
+      response.on('error', cleanup);
+      fileStream.on('error', cleanup);
+
+      fileStream.on('finish', () => {
+        fileStream.close(async (closeErr) => {
+          if (closeErr) {
+            cleanup(closeErr);
+            return;
+          }
+          try {
+            await fs.rename(tmpPath, destPath);
+            resolve();
+          } catch (renameErr) {
+            cleanup(renameErr);
+          }
+        });
+      });
+
+      response.pipe(fileStream);
+    });
+
+    request.on('timeout', () => {
+      request.destroy(new Error('Download timeout'));
+    });
+
+    request.on('error', (err) => {
+      fs.rm(tmpPath, { force: true }).catch(() => {});
+      reject(err);
+    });
+  });
+}
+
+async function ensureLocalPowerMtaZip(send) {
+  const zipPath = path.join(projectRoot, 'PowerMTA5.zip');
+  try {
+    await fs.access(zipPath);
+    return { available: true, path: zipPath };
+  } catch {}
+
+  const candidates = [];
+  if (env.PMTA_ZIP_URL) candidates.push(env.PMTA_ZIP_URL);
+  if (env.API_URL) candidates.push(`${env.API_URL.replace(/\/$/, '')}/pmta-files/PowerMTA5.zip`);
+  candidates.push(`http://127.0.0.1:${env.PORT || 3001}/pmta-files/PowerMTA5.zip`);
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      await fs.mkdir(path.dirname(zipPath), { recursive: true });
+      send?.(`Caching PowerMTA5.zip from ${candidate}...`);
+      await downloadFileToPath(candidate, zipPath, 240000);
+      send?.('PowerMTA5.zip cached on master server');
+      return { available: true, path: zipPath };
+    } catch (err) {
+      send?.(`Cache attempt failed (${candidate}): ${err.message}`);
+    }
+  }
+
+  return { available: false, path: zipPath };
 }
 
 router.post('/test-ssh', authenticate, authorize('admin'), async (req, res) => {
@@ -397,33 +480,28 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     await sshExecSafe('rm -rf /root/PMTA && mkdir -p /root/PMTA /etc/pmta/keys /var/spool/pmta /var/log/pmta');
     send('Directories created');
 
-    const localZipPath = path.join(projectRoot, 'PowerMTA5.zip');
     const remoteZipPath = '/root/PowerMTA5.zip';
-    let usedLocalZip = false;
+    const { available: localZipAvailable, path: localZipPath } = await ensureLocalPowerMtaZip(send);
+    let zipExistsOnRemote = false;
 
-    try {
-      await fs.access(localZipPath);
-      usedLocalZip = true;
-    } catch {}
-
-    if (usedLocalZip) {
+    if (localZipAvailable) {
       send('Uploading PowerMTA5.zip to target VPS...');
-      await sshExecSafe(`rm -f ${remoteZipPath}`);
+      await sshExecSafe(`rm -f ${remoteZipPath}`).catch(() => {});
       await uploadFileViaSftp(conn, localZipPath, remoteZipPath);
       send('Upload complete');
+      zipExistsOnRemote = true;
     } else {
       const apiBase = `${req.protocol}://${req.get('host')}`;
       const zipUrl = `${apiBase}/pmta-files/PowerMTA5.zip`;
-      send('PowerMTA5.zip not found locally. Checking HTTP source...');
-      const { stdout: zipHttpCode } = await sshExecSafe(`curl -sSL -o /dev/null -w "%{http_code}" -I "${zipUrl}" || echo 000`, 20000);
-      const zipAvailable = (zipHttpCode || '').trim().startsWith('200');
-
-      if (zipAvailable) {
-        send('Downloading PowerMTA5.zip from server...');
-        await sshExecSafe(`curl -sSL "${zipUrl}" -o ${remoteZipPath}`, 180000);
+      send('PowerMTA5.zip not cached locally. Attempting HTTP download from master server...');
+      try {
+        await sshExecSafe(`curl -fSL --connect-timeout 20 --max-time 240 "${zipUrl}" -o ${remoteZipPath}`, 300000);
         send('Download complete');
-      } else {
-        send('PowerMTA5.zip not reachable via HTTP. Falling back to individual RPM downloads...');
+        zipExistsOnRemote = true;
+      } catch (downloadErr) {
+        send(`HTTP download failed: ${downloadErr.message}`);
+        await sshExecSafe(`rm -f ${remoteZipPath}`).catch(() => {});
+        send('Falling back to individual RPM downloads...');
         const rpmUrls = [
           `${apiBase}/pmta-files/PowerMTA-5.0r8.rpm`,
           `${apiBase}/pmta-files/PowerMTA-api-5.0r8.rpm`,
@@ -432,7 +510,7 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
         for (const url of rpmUrls) {
           const filename = url.split('/').pop();
           send(`Downloading ${filename}...`);
-          await sshExecSafe(`curl -sSL "${url}" -o /root/PMTA/${filename}`, 90000);
+          await sshExecSafe(`curl -fSL --connect-timeout 20 --max-time 120 "${url}" -o /root/PMTA/${filename}`, 180000);
         }
         send('Installing PowerMTA RPM packages...');
         await sshExecSafe('rpm -ivh /root/PMTA/PowerMTA-5.0r8.rpm /root/PMTA/PowerMTA-api-5.0r8.rpm /root/PMTA/PowerMTA-snmp-5.0r8.rpm 2>&1 || true', 120000);
@@ -440,11 +518,12 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
       }
     }
 
-    let zipExistsOnRemote = false;
-    try {
-      const { stdout: check } = await sshExecSafe(`[ -f ${remoteZipPath} ] && echo ok || echo missing`, 5000);
-      zipExistsOnRemote = check.trim() === 'ok';
-    } catch {}
+    if (!zipExistsOnRemote) {
+      try {
+        const { stdout: check } = await sshExecSafe(`[ -f ${remoteZipPath} ] && echo ok || echo missing`, 5000);
+        zipExistsOnRemote = check.trim() === 'ok';
+      } catch {}
+    }
 
     if (zipExistsOnRemote) {
       send('Extracting PowerMTA5.zip...');

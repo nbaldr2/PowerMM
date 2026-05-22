@@ -46,6 +46,7 @@ const env = {
 
   PMTA_LICENSE_PATH: process.env.PMTA_LICENSE_PATH || '',
   PMTA_LICENSE_CONTENT: process.env.PMTA_LICENSE_CONTENT || '',
+  PMTA_ZIP_URL: process.env.PMTA_ZIP_URL || '',
 };
 
 export default env;
