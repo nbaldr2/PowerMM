@@ -100,7 +100,10 @@ function uploadFileViaSftp(conn, localPath, remotePath) {
     conn.sftp((err, sftp) => {
       if (err) return reject(err);
       const readStream = createReadStream(localPath);
-      const writeStream = sftp.createWriteStream(remotePath, { flags: 'w' });
+      const writeStream = sftp.createWriteStream(remotePath, {
+        flags: 'w',
+        mode: 0o644
+      });
 
       let finished = false;
       const onError = (streamErr) => {
@@ -121,6 +124,21 @@ function uploadFileViaSftp(conn, localPath, remotePath) {
       readStream.pipe(writeStream);
     });
   });
+}
+
+async function uploadDirectoryViaSftp(conn, localDir, remoteDir, send) {
+  await sshExec(conn, `mkdir -p "${remoteDir}"`).catch(() => {});
+  const entries = fs.readdir(localDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const localPath = path.join(localDir, entry.name);
+    const remotePath = `${remoteDir.replace(/\/$/, '')}/${entry.name}`;
+    if (entry.isFile()) {
+      await uploadFileViaSftp(conn, localPath, remotePath);
+    } else if (entry.isDirectory()) {
+      await uploadDirectoryViaSftp(conn, localPath, remotePath, send);
+    }
+  }
 }
 
 function downloadFileToPath(url, destPath, timeoutMs = 180000) {
@@ -180,27 +198,23 @@ async function ensureLocalPowerMtaZip(send) {
   const zipPath = path.join(projectRoot, 'PowerMTA5.zip');
   try {
     await fs.access(zipPath);
+    send?.('PowerMTA5.zip found on master server');
     return { available: true, path: zipPath };
   } catch {}
 
-  const candidates = [];
-  if (env.PMTA_ZIP_URL) candidates.push(env.PMTA_ZIP_URL);
-  if (env.API_URL) candidates.push(`${env.API_URL.replace(/\/$/, '')}/pmta-files/PowerMTA5.zip`);
-  candidates.push(`http://127.0.0.1:${env.PORT || 3001}/pmta-files/PowerMTA5.zip`);
-
-  for (const candidate of candidates) {
-    if (!candidate) continue;
+  if (env.PMTA_ZIP_URL) {
     try {
       await fs.mkdir(path.dirname(zipPath), { recursive: true });
-      send?.(`Caching PowerMTA5.zip from ${candidate}...`);
-      await downloadFileToPath(candidate, zipPath, 240000);
-      send?.('PowerMTA5.zip cached on master server');
+      send?.(`Downloading PowerMTA5.zip from PMTA_ZIP_URL...`);
+      await downloadFileToPath(env.PMTA_ZIP_URL, zipPath, 300000);
+      send?.('PowerMTA5.zip downloaded and cached');
       return { available: true, path: zipPath };
     } catch (err) {
-      send?.(`Cache attempt failed (${candidate}): ${err.message}`);
+      send?.(`PMTA_ZIP_URL download failed: ${err.message}`);
     }
   }
 
+  send?.('PowerMTA5.zip not found. Will upload individual files instead.');
   return { available: false, path: zipPath };
 }
 
@@ -482,57 +496,55 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
 
     const remoteZipPath = '/root/PowerMTA5.zip';
     const { available: localZipAvailable, path: localZipPath } = await ensureLocalPowerMtaZip(send);
-    let zipExistsOnRemote = false;
+    const pmtaExtractedDir = path.join(projectRoot, 'PowerMTA5.0r8_ALMALINUX');
 
     if (localZipAvailable) {
       send('Uploading PowerMTA5.zip to target VPS...');
       await sshExecSafe(`rm -f ${remoteZipPath}`).catch(() => {});
       await uploadFileViaSftp(conn, localZipPath, remoteZipPath);
       send('Upload complete');
-      zipExistsOnRemote = true;
-    } else {
-      const apiBase = `${req.protocol}://${req.get('host')}`;
-      const zipUrl = `${apiBase}/pmta-files/PowerMTA5.zip`;
-      send('PowerMTA5.zip not cached locally. Attempting HTTP download from master server...');
-      try {
-        await sshExecSafe(`curl -fSL --connect-timeout 20 --max-time 240 "${zipUrl}" -o ${remoteZipPath}`, 300000);
-        send('Download complete');
-        zipExistsOnRemote = true;
-      } catch (downloadErr) {
-        send(`HTTP download failed: ${downloadErr.message}`);
-        await sshExecSafe(`rm -f ${remoteZipPath}`).catch(() => {});
-        send('Falling back to individual RPM downloads...');
-        const rpmUrls = [
-          `${apiBase}/pmta-files/PowerMTA-5.0r8.rpm`,
-          `${apiBase}/pmta-files/PowerMTA-api-5.0r8.rpm`,
-          `${apiBase}/pmta-files/PowerMTA-snmp-5.0r8.rpm`,
-        ];
-        for (const url of rpmUrls) {
-          const filename = url.split('/').pop();
-          send(`Downloading ${filename}...`);
-          await sshExecSafe(`curl -fSL --connect-timeout 20 --max-time 120 "${url}" -o /root/PMTA/${filename}`, 180000);
-        }
-        send('Installing PowerMTA RPM packages...');
-        await sshExecSafe('rpm -ivh /root/PMTA/PowerMTA-5.0r8.rpm /root/PMTA/PowerMTA-api-5.0r8.rpm /root/PMTA/PowerMTA-snmp-5.0r8.rpm 2>&1 || true', 120000);
-        send('RPM packages installed');
-      }
-    }
 
-    if (!zipExistsOnRemote) {
-      try {
-        const { stdout: check } = await sshExecSafe(`[ -f ${remoteZipPath} ] && echo ok || echo missing`, 5000);
-        zipExistsOnRemote = check.trim() === 'ok';
-      } catch {}
-    }
-
-    if (zipExistsOnRemote) {
       send('Extracting PowerMTA5.zip...');
       await sshExecSafe(`cd /root/PMTA && (unzip -o ${remoteZipPath} >/dev/null 2>&1 || (command -v bsdtar >/dev/null 2>&1 && bsdtar -xf ${remoteZipPath} -C /root/PMTA))`, 180000);
       send('Installing PowerMTA RPM package(s)...');
       await sshExecSafe(`cd /root/PMTA && find . -maxdepth 3 -type f -name 'PowerMTA-5.0r8*.rpm' -exec rpm -ivh {} \\; 2>&1 || true`, 180000);
       send('PowerMTA package installed from zip');
     } else {
-      send('PowerMTA5.zip not found after transfer. Assuming RPM packages installed from fallback.');
+      const uploadExtracted = async () => {
+        const dirFiles = await fs.readdir(pmtaExtractedDir, { withFileTypes: true });
+        for (const entry of dirFiles) {
+          if (entry.name.startsWith('.')) continue;
+          const localPath = path.join(pmtaExtractedDir, entry.name);
+          const remotePath = `/root/PMTA/${entry.name}`;
+          if (entry.isFile()) {
+            send(`Uploading ${entry.name}...`);
+            await uploadFileViaSftp(conn, localPath, remotePath);
+          } else if (entry.isDirectory()) {
+            send(`Uploading directory ${entry.name}/...`);
+            await uploadDirectoryViaSftp(conn, localPath, `/root/PMTA/${entry.name}`, send);
+          }
+        }
+      };
+
+      let extractedUploaded = false;
+      try {
+        await fs.access(pmtaExtractedDir);
+        send('Uploading PowerMTA files individually from extracted directory...');
+        await uploadExtracted();
+        send('Files uploaded');
+        extractedUploaded = true;
+      } catch {
+        send('Extracted directory not found on master server.');
+      }
+
+      if (extractedUploaded) {
+        send('Installing PowerMTA RPM package(s)...');
+        await sshExecSafe(`cd /root/PMTA && find . -maxdepth 3 -type f -name 'PowerMTA-5.0r8*.rpm' -exec rpm -ivh {} \\; 2>&1 || true`, 180000);
+        send('PowerMTA package installed');
+      } else {
+        send('No PowerMTA files available. Installation cannot proceed.');
+        throw new Error('No PowerMTA installation files found on master server');
+      }
     }
 
     send('Stopping existing PowerMTA services...');
