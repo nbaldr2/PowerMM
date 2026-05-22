@@ -10,11 +10,18 @@ import crypto from 'crypto';
 import forge from 'node-forge';
 import logger from '../utils/logger.js';
 import fs from 'fs/promises';
+import { createReadStream } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const router = Router();
 
 const SSH_SESSION_TIMEOUT = 30 * 60 * 1000;
 const sshSessions = new Map();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.join(__dirname, '..', '..');
 
 const sshRateLimit = new Map();
 const SSH_RATE_LIMIT_WINDOW = 60000;
@@ -82,6 +89,34 @@ function sshExec(conn, command) {
       stream.on('data', (d) => { stdout += d.toString(); });
       stream.stderr.on('data', (d) => { stderr += d.toString(); });
       stream.on('close', (code) => resolve({ stdout, stderr, code }));
+    });
+  });
+}
+
+function uploadFileViaSftp(conn, localPath, remotePath) {
+  return new Promise((resolve, reject) => {
+    conn.sftp((err, sftp) => {
+      if (err) return reject(err);
+      const readStream = createReadStream(localPath);
+      const writeStream = sftp.createWriteStream(remotePath, { flags: 'w' });
+
+      let finished = false;
+      const onError = (streamErr) => {
+        if (finished) return;
+        finished = true;
+        reject(streamErr);
+      };
+
+      writeStream.on('close', () => {
+        if (finished) return;
+        finished = true;
+        resolve();
+      });
+
+      readStream.on('error', onError);
+      writeStream.on('error', onError);
+
+      readStream.pipe(writeStream);
     });
   });
 }
@@ -362,37 +397,63 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     await sshExecSafe('rm -rf /root/PMTA && mkdir -p /root/PMTA /etc/pmta/keys /var/spool/pmta /var/log/pmta');
     send('Directories created');
 
-    const apiBase = `${req.protocol}://${req.get('host')}`;
-    const zipUrl = `${apiBase}/pmta-files/PowerMTA5.zip`;
-    send('Checking PowerMTA package source...');
-    const { stdout: zipHttpCode } = await sshExecSafe(`curl -sSL -o /dev/null -w "%{http_code}" -I "${zipUrl}" || echo 000`, 20000);
-    const zipAvailable = (zipHttpCode || '').trim().startsWith('200');
+    const localZipPath = path.join(projectRoot, 'PowerMTA5.zip');
+    const remoteZipPath = '/root/PowerMTA5.zip';
+    let usedLocalZip = false;
 
-    if (zipAvailable) {
-      send('Downloading PowerMTA5.zip from server...');
-      await sshExecSafe(`curl -sSL "${zipUrl}" -o /root/PowerMTA5.zip`, 120000);
+    try {
+      await fs.access(localZipPath);
+      usedLocalZip = true;
+    } catch {}
 
+    if (usedLocalZip) {
+      send('Uploading PowerMTA5.zip to target VPS...');
+      await sshExecSafe(`rm -f ${remoteZipPath}`);
+      await uploadFileViaSftp(conn, localZipPath, remoteZipPath);
+      send('Upload complete');
+    } else {
+      const apiBase = `${req.protocol}://${req.get('host')}`;
+      const zipUrl = `${apiBase}/pmta-files/PowerMTA5.zip`;
+      send('PowerMTA5.zip not found locally. Checking HTTP source...');
+      const { stdout: zipHttpCode } = await sshExecSafe(`curl -sSL -o /dev/null -w "%{http_code}" -I "${zipUrl}" || echo 000`, 20000);
+      const zipAvailable = (zipHttpCode || '').trim().startsWith('200');
+
+      if (zipAvailable) {
+        send('Downloading PowerMTA5.zip from server...');
+        await sshExecSafe(`curl -sSL "${zipUrl}" -o ${remoteZipPath}`, 180000);
+        send('Download complete');
+      } else {
+        send('PowerMTA5.zip not reachable via HTTP. Falling back to individual RPM downloads...');
+        const rpmUrls = [
+          `${apiBase}/pmta-files/PowerMTA-5.0r8.rpm`,
+          `${apiBase}/pmta-files/PowerMTA-api-5.0r8.rpm`,
+          `${apiBase}/pmta-files/PowerMTA-snmp-5.0r8.rpm`,
+        ];
+        for (const url of rpmUrls) {
+          const filename = url.split('/').pop();
+          send(`Downloading ${filename}...`);
+          await sshExecSafe(`curl -sSL "${url}" -o /root/PMTA/${filename}`, 90000);
+        }
+        send('Installing PowerMTA RPM packages...');
+        await sshExecSafe('rpm -ivh /root/PMTA/PowerMTA-5.0r8.rpm /root/PMTA/PowerMTA-api-5.0r8.rpm /root/PMTA/PowerMTA-snmp-5.0r8.rpm 2>&1 || true', 120000);
+        send('RPM packages installed');
+      }
+    }
+
+    let zipExistsOnRemote = false;
+    try {
+      const { stdout: check } = await sshExecSafe(`[ -f ${remoteZipPath} ] && echo ok || echo missing`, 5000);
+      zipExistsOnRemote = check.trim() === 'ok';
+    } catch {}
+
+    if (zipExistsOnRemote) {
       send('Extracting PowerMTA5.zip...');
-      await sshExecSafe('cd /root/PMTA && (unzip -o /root/PowerMTA5.zip >/dev/null 2>&1 || (command -v bsdtar >/dev/null 2>&1 && bsdtar -xf /root/PowerMTA5.zip -C /root/PMTA))', 120000);
-
+      await sshExecSafe(`cd /root/PMTA && (unzip -o ${remoteZipPath} >/dev/null 2>&1 || (command -v bsdtar >/dev/null 2>&1 && bsdtar -xf ${remoteZipPath} -C /root/PMTA))`, 180000);
       send('Installing PowerMTA RPM package(s)...');
       await sshExecSafe(`cd /root/PMTA && find . -maxdepth 3 -type f -name 'PowerMTA-5.0r8*.rpm' -exec rpm -ivh {} \\; 2>&1 || true`, 180000);
       send('PowerMTA package installed from zip');
     } else {
-      send('PowerMTA5.zip not found on server. Falling back to RPM downloads...');
-      const rpmUrls = [
-        `${apiBase}/pmta-files/PowerMTA-5.0r8.rpm`,
-        `${apiBase}/pmta-files/PowerMTA-api-5.0r8.rpm`,
-        `${apiBase}/pmta-files/PowerMTA-snmp-5.0r8.rpm`,
-      ];
-      for (const url of rpmUrls) {
-        const filename = url.split('/').pop();
-        send(`Downloading ${filename}...`);
-        await sshExecSafe(`curl -sSL "${url}" -o /root/PMTA/${filename}`, 60000);
-      }
-      send('Installing PowerMTA RPM packages...');
-      await sshExecSafe('rpm -ivh /root/PMTA/PowerMTA-5.0r8.rpm /root/PMTA/PowerMTA-api-5.0r8.rpm /root/PMTA/PowerMTA-snmp-5.0r8.rpm 2>&1 || true', 120000);
-      send('RPM packages installed');
+      send('PowerMTA5.zip not found after transfer. Assuming RPM packages installed from fallback.');
     }
 
     send('Stopping existing PowerMTA services...');
