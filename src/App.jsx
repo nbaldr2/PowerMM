@@ -793,31 +793,65 @@ ${DEFAULT_HTML_BODY}`
   const [pmtaConfigCode, setPmtaConfigCode] = useState(`# PowerMTA configuration template for MoonMailer Pro
 # Auto-generated on ${new Date().toISOString()}
 
-# Hostname and network bindings
-host-name mail.{{ domain }}
+# ─────────────────────────────────────────────
+# GLOBAL SETTINGS
+# ─────────────────────────────────────────────
+host-name             mail.{{ domain }}
+log-file              /var/log/pmta/pmta.log
+spool                 /var/spool/pmta
+http-access           0.0.0.0/0 monitor
 
-log-file /var/log/pmta/pmta.log
-spool /var/spool/pmta
+# ─────────────────────────────────────────────
+# SMTP AUTHENTICATION CREDENTIALS
+# ─────────────────────────────────────────────
+smtp-auth-username    {{ SMTP_USERNAME }}
+smtp-auth-password    {{ SMTP_PASSWORD }}
 
-http-access 127.0.0.1 monitor
-
+# ─────────────────────────────────────────────
+# RELAY / SOURCE RULES
+# ─────────────────────────────────────────────
 <source 127.0.0.1>
     always-allow-relaying yes
 </source>
 
 <source 0.0.0.0/0>
     always-allow-relaying no
-    smtp-service yes
+    smtp-service       yes
+    smtp-auth-username {{ SMTP_USERNAME }}
+    smtp-auth-password {{ SMTP_PASSWORD }}
 </source>
 
+# ─────────────────────────────────────────────
+# VIRTUAL MTA — PRIMARY
+# ─────────────────────────────────────────────
 <virtual-mta default-vmta>
-    smtp-source-ip {{ primary_ip }}
+    smtp-source-ip     {{ PRIMARY_IP }}
+    domain-key         default,{{ domain }},/etc/pmta/keys/{{ domain }}.pem
 </virtual-mta>
 
+# ─────────────────────────────────────────────
+# VIRTUAL MTA — SECONDARY BLOCKS
+# ─────────────────────────────────────────────
 {{ SECONDARY_VMTA_BLOCKS }}
 
-{{ SECONDARY_VMTA_POOL_ENTRIES }}
-`)
+# ─────────────────────────────────────────────
+# VIRTUAL MTA POOL
+# ─────────────────────────────────────────────
+<virtual-mta-pool default-pool>
+    virtual-mta        default-vmta
+    {{ SECONDARY_VMTA_POOL_ENTRIES }}
+</virtual-mta-pool>
+
+# ─────────────────────────────────────────────
+# DOMAIN CONFIGURATION
+# ─────────────────────────────────────────────
+<domain {{ domain }}>
+    virtual-mta-pool   default-pool
+    max-smtp-out       20
+    max-msg-rate       500/h
+    retry-after        10m
+    expire-after       4d12h
+</domain>`)
 
   // ISP limits manager presets & custom rules
   const [ispRules, setIspRules] = useState([
@@ -3067,8 +3101,8 @@ ${getCompiledHtml()}`}
                       <span className="text-[10px] text-brand-text font-bold block mb-1 uppercase tracking-wider">Click variables to insert:</span>
                       <div className="flex flex-wrap gap-1.5">
                         {[
-                          '{{ domain }}', '{{ hostname }}', '{{ ip }}', '{{ primary_ip }}',
-                          '{{ smtp_user }}', '{{ smtp_pass }}', '{{ smtp_port }}', '{{ dkim_selector }}',
+                          '{{ domain }}', '{{ hostname }}', '{{ ip }}', '{{ primary_ip }}', '{{ PRIMARY_IP }}',
+                          '{{ smtp_user }}', '{{ SMTP_USERNAME }}', '{{ smtp_pass }}', '{{ SMTP_PASSWORD }}', '{{ smtp_port }}', '{{ dkim_selector }}',
                           '{{ monitor_port }}', '{{ SECONDARY_VMTA_BLOCKS }}', '{{ SECONDARY_VMTA_POOL_ENTRIES }}'
                         ].map(token => (
                           <button
