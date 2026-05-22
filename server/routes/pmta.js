@@ -16,6 +16,34 @@ const router = Router();
 const SSH_SESSION_TIMEOUT = 30 * 60 * 1000;
 const sshSessions = new Map();
 
+const sshRateLimit = new Map();
+const SSH_RATE_LIMIT_WINDOW = 60000;
+const SSH_RATE_LIMIT_MAX = 10;
+
+function checkSshRateLimit(userId) {
+  const now = Date.now();
+  const record = sshRateLimit.get(userId) || { count: 0, windowStart: now };
+  
+  if (now - record.windowStart > SSH_RATE_LIMIT_WINDOW) {
+    record.count = 0;
+    record.windowStart = now;
+  }
+  
+  record.count++;
+  sshRateLimit.set(userId, record);
+  
+  return record.count <= SSH_RATE_LIMIT_MAX;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, record] of sshRateLimit.entries()) {
+    if (now - record.windowStart > SSH_RATE_LIMIT_WINDOW * 2) {
+      sshRateLimit.delete(userId);
+    }
+  }
+}, 300000);
+
 function cleanupSshSession(userId) {
   const session = sshSessions.get(userId);
   if (session) {
@@ -59,6 +87,10 @@ function sshExec(conn, command) {
 }
 
 router.post('/test-ssh', authenticate, authorize('admin'), async (req, res) => {
+  if (!checkSshRateLimit(req.user.id)) {
+    return res.status(429).json({ error: 'Too many SSH connection attempts. Please wait a minute.' });
+  }
+
   const { host, port, username, password, privateKey, useLocalServer } = req.body;
   if (useLocalServer) return res.json({ success: true, message: 'Local server mode — no SSH needed' });
   if (!host) return res.status(400).json({ error: 'SSH host required' });
