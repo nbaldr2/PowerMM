@@ -13,8 +13,38 @@ import fs from 'fs/promises';
 
 const router = Router();
 
-// Active SSH connections (per-session, never persisted)
+const SSH_SESSION_TIMEOUT = 30 * 60 * 1000;
 const sshSessions = new Map();
+
+function cleanupSshSession(userId) {
+  const session = sshSessions.get(userId);
+  if (session) {
+    try {
+      session.conn.end();
+    } catch {}
+    clearTimeout(session.timeout);
+    sshSessions.delete(userId);
+    logger.debug(`SSH session cleaned up for user ${userId}`);
+  }
+}
+
+function refreshSshTimeout(userId) {
+  const session = sshSessions.get(userId);
+  if (session) {
+    clearTimeout(session.timeout);
+    session.timeout = setTimeout(() => {
+      cleanupSshSession(userId);
+    }, SSH_SESSION_TIMEOUT);
+  }
+}
+
+setInterval(() => {
+  for (const [userId, session] of sshSessions.entries()) {
+    if (Date.now() - session.createdAt > SSH_SESSION_TIMEOUT) {
+      cleanupSshSession(userId);
+    }
+  }
+}, 60000);
 
 function sshExec(conn, command) {
   return new Promise((resolve, reject) => {
@@ -28,21 +58,33 @@ function sshExec(conn, command) {
   });
 }
 
-// POST /pmta/test-ssh — test SSH connection
 router.post('/test-ssh', authenticate, authorize('admin'), async (req, res) => {
   const { host, port, username, password, privateKey, useLocalServer } = req.body;
   if (useLocalServer) return res.json({ success: true, message: 'Local server mode — no SSH needed' });
   if (!host) return res.status(400).json({ error: 'SSH host required' });
 
+  const sanitizedHost = host.replace(/[^\w.-]/g, '');
+  const sanitizedPort = Math.min(Math.max(parseInt(port) || 22, 1), 65535);
+  const sanitizedUsername = (username || 'root').replace(/[^\w.-]/g, '');
+
+  cleanupSshSession(req.user.id);
+
   const conn = new SSHClient();
-  const timeout = setTimeout(() => { conn.end(); res.status(408).json({ error: 'Connection timeout' }); }, 15000);
+  const timeout = setTimeout(() => {
+    conn.end();
+    res.status(408).json({ error: 'Connection timeout' });
+  }, 15000);
 
   conn.on('ready', async () => {
     clearTimeout(timeout);
     try {
       const { stdout } = await sshExec(conn, 'hostname && uname -r');
-      sshSessions.set(req.user.id, conn);
-      res.json({ success: true, message: `Connected as ${username} to ${host}:${port || 22}`, details: stdout.trim() });
+      sshSessions.set(req.user.id, {
+        conn,
+        createdAt: Date.now(),
+        timeout: setTimeout(() => cleanupSshSession(req.user.id), SSH_SESSION_TIMEOUT)
+      });
+      res.json({ success: true, message: `Connected as ${sanitizedUsername} to ${sanitizedHost}:${sanitizedPort}`, details: stdout.trim() });
     } catch (err) {
       conn.end();
       res.status(500).json({ error: err.message });
@@ -55,9 +97,23 @@ router.post('/test-ssh', authenticate, authorize('admin'), async (req, res) => {
     res.status(401).json({ error: `SSH auth failed: ${err.message}` });
   });
 
-  const connOpts = { host, port: port || 22, username: username || 'root', readyTimeout: 12000 };
-  if (privateKey) { connOpts.privateKey = privateKey; }
-  else if (password) { connOpts.password = password; }
+  conn.on('close', () => {
+    cleanupSshSession(req.user.id);
+  });
+
+  const connOpts = {
+    host: sanitizedHost,
+    port: sanitizedPort,
+    username: sanitizedUsername,
+    readyTimeout: 12000,
+    keepaliveInterval: 30000,
+    keepaliveCountMax: 3
+  };
+  if (privateKey && typeof privateKey === 'string') {
+    connOpts.privateKey = privateKey.substring(0, 10000);
+  } else if (password && typeof password === 'string') {
+    connOpts.password = password.substring(0, 256);
+  }
   conn.connect(connOpts);
 });
 
@@ -135,14 +191,16 @@ router.post('/dns-records', authenticate, async (req, res) => {
   res.json({ records });
 });
 
-// POST /pmta/service/:action — control PMTA service via SSH
 router.post('/service/:action', authenticate, authorize('admin'), async (req, res) => {
   const { action } = req.params;
   const validActions = ['status', 'start', 'stop', 'restart', 'reload'];
   if (!validActions.includes(action)) return res.status(400).json({ error: 'Invalid action' });
 
-  const conn = sshSessions.get(req.user.id);
-  if (!conn) return res.status(400).json({ error: 'No active SSH session. Connect first.' });
+  const session = sshSessions.get(req.user.id);
+  if (!session) return res.status(400).json({ error: 'No active SSH session. Connect first.' });
+
+  refreshSshTimeout(req.user.id);
+  const conn = session.conn;
 
   try {
     const cmd = action === 'reload' ? 'pmta reload' : `systemctl ${action} pmta`;
@@ -157,16 +215,14 @@ router.post('/service/:action', authenticate, authorize('admin'), async (req, re
   }
 });
 
-// POST /pmta/install — install PowerMTA via SSH
 router.post('/install', authenticate, authorize('admin'), async (req, res) => {
-  const conn = sshSessions.get(req.user.id);
-  if (!conn) return res.status(400).json({ error: 'No active SSH session. Connect via Step 1 first.' });
+  const session = sshSessions.get(req.user.id);
+  if (!session) return res.status(400).json({ error: 'No active SSH session. Connect via Step 1 first.' });
 
   const { rows } = await query('SELECT * FROM pmta_configs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1', [req.user.id]);
   if (rows.length === 0) return res.status(400).json({ error: 'No PMTA config saved. Complete Step 2 first.' });
   const config = rows[0];
 
-  // Respond immediately — progress is sent via Socket.io
   res.json({ message: 'Installation started. Watch progress via live events.' });
 
   const send = (payload) => {
@@ -177,6 +233,7 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
 
   const sshExecSafe = async (cmd, timeout = 60000) => {
     return new Promise((resolve, reject) => {
+      refreshSshTimeout(req.user.id);
       let streamRef = null;
       let finished = false;
       const timer = setTimeout(() => {
@@ -186,7 +243,7 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
         try { streamRef?.end?.(); } catch {}
         reject(new Error(`Command timeout: ${cmd.substring(0, 50)}...`));
       }, timeout);
-      conn.exec(cmd, (err, stream) => {
+      session.conn.exec(cmd, (err, stream) => {
         streamRef = stream;
         if (err) { clearTimeout(timer); finished = true; return reject(err); }
         let stdout = '', stderr = '';
@@ -262,9 +319,9 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     send('Patching PowerMTA binaries...');
     await sshExecSafe('rm -f /usr/sbin/pmtad /usr/sbin/pmtahttpd');
     await sshExecSafe("find /root/PMTA -type f \\( -name pmtad -o -name pmtahttpd \\) -exec cp -f {} /usr/sbin/ \\; 2>/dev/null || true");
-    await sshExecSafe('chmod -R 777 /usr/sbin/pmta 2>/dev/null || true');
-    await sshExecSafe('chmod -R 777 /usr/sbin/pmtad 2>/dev/null || true');
-    await sshExecSafe('chmod -R 777 /usr/sbin/pmtahttpd 2>/dev/null || true');
+    await sshExecSafe('chmod 755 /usr/sbin/pmta 2>/dev/null || true');
+    await sshExecSafe('chmod 755 /usr/sbin/pmtad 2>/dev/null || true');
+    await sshExecSafe('chmod 755 /usr/sbin/pmtahttpd 2>/dev/null || true');
     send('Binaries patched');
 
     send('Installing license file from package...');
@@ -386,10 +443,12 @@ fi | grep -E ':(${smtpPort}|${monitorPort})' || echo "Ports not yet bound"
   }
 });
 
-// POST /pmta/uninstall
 router.post('/uninstall', authenticate, authorize('admin'), async (req, res) => {
-  const conn = sshSessions.get(req.user.id);
-  if (!conn) return res.status(400).json({ error: 'No SSH session' });
+  const session = sshSessions.get(req.user.id);
+  if (!session) return res.status(400).json({ error: 'No SSH session' });
+
+  refreshSshTimeout(req.user.id);
+  const conn = session.conn;
 
   try {
     await sshExec(conn, 'systemctl stop pmta 2>/dev/null || true');
@@ -401,10 +460,13 @@ router.post('/uninstall', authenticate, authorize('admin'), async (req, res) => 
   }
 });
 
-// POST /pmta/load-config — load config from remote server
 router.post('/load-config', authenticate, authorize('admin'), async (req, res) => {
-  const conn = sshSessions.get(req.user.id);
-  if (!conn) return res.status(400).json({ error: 'No SSH session' });
+  const session = sshSessions.get(req.user.id);
+  if (!session) return res.status(400).json({ error: 'No SSH session' });
+
+  refreshSshTimeout(req.user.id);
+  const conn = session.conn;
+
   try {
     const { stdout } = await sshExec(conn, 'cat /etc/pmta/config 2>/dev/null || echo "# No config found"');
     res.json({ config: stdout });

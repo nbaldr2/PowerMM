@@ -1,3 +1,9 @@
+# Environment files (NEVER commit these)
+.env
+.env.local
+.env.production
+.env.*.local
+
 # PowerMTA installation packages (served statically, not committed)
 PowerMTA5.0r8_ALMALINUX/
 PowerMTA5.zip
