@@ -1003,20 +1003,22 @@ http-access           0.0.0.0/0 monitor
   }
 
   const copyToClipboard = (text, label) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedRecord(label)
-      setTimeout(() => setCopiedRecord(null), 2000)
-    }).catch(() => {
-      const ta = document.createElement('textarea')
-      ta.value = text
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
-      setCopiedRecord(label)
-      setTimeout(() => setCopiedRecord(null), 2000)
-    })
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    ta.setSelectionRange(0, 99999)
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+    setCopiedRecord(label)
+    setTimeout(() => setCopiedRecord(null), 2000)
   }
+
+  const spfValue = `v=spf1 ip4:${pmtaPrimaryIp} ${pmtaSecondaryIps.split('\n').map(ip => 'ip4:' + ip.trim()).join(' ')} -all`
+  const dkimValue = 'v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G4sFvG1X6V...[2048-bit Private Public Key Pair Auto Generated]'
+  const dmarcValue = `v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc-reports@${sendingDomain}`
 
   return (
     <div className="min-h-screen bg-brand-bg text-brand-text flex flex-col font-sans selection:bg-brand-cyan/30 selection:text-white">
@@ -3603,10 +3605,10 @@ http-access           0.0.0.0/0 monitor
                 </div>
                 <div className="flex items-start gap-2">
                   <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                    {`v=spf1 ip4:${pmtaPrimaryIp} ${pmtaSecondaryIps.split('\n').map(ip => `ip4:${ip.trim()}`).join(' ')} -all`}
+                    {spfValue}
                   </pre>
                   <button
-                    onClick={() => copyToClipboard(`v=spf1 ip4:${pmtaPrimaryIp} ${pmtaSecondaryIps.split('\n').map(ip => `ip4:${ip.trim()}`).join(' ')} -all`, 'spf')}
+                    onClick={() => copyToClipboard(spfValue, 'spf')}
                     className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
                     title="Copy SPF record"
                   >
@@ -3623,10 +3625,10 @@ http-access           0.0.0.0/0 monitor
                 </div>
                 <div className="flex items-start gap-2">
                   <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                    {`v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G4sFvG1X6V...[2048-bit Private Public Key Pair Auto Generated]`}
+                    {dkimValue}
                   </pre>
                   <button
-                    onClick={() => copyToClipboard(`v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G4sFvG1X6V...[2048-bit Private Public Key Pair Auto Generated]`, 'dkim')}
+                    onClick={() => copyToClipboard(dkimValue, 'dkim')}
                     className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
                     title="Copy DKIM record"
                   >
@@ -3643,10 +3645,10 @@ http-access           0.0.0.0/0 monitor
                 </div>
                 <div className="flex items-start gap-2">
                   <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                    {`v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc-reports@${sendingDomain}`}
+                    {dmarcValue}
                   </pre>
                   <button
-                    onClick={() => copyToClipboard(`v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc-reports@${sendingDomain}`, 'dmarc')}
+                    onClick={() => copyToClipboard(dmarcValue, 'dmarc')}
                     className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
                     title="Copy DMARC record"
                   >
