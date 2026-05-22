@@ -3,7 +3,7 @@ import {
   Terminal, Mail, Settings, Server, Cpu, ShieldCheck, Sparkles, RefreshCw,
   Play, Trash2, Plus, Check, AlertCircle, ExternalLink, FileText,
   ChevronDown, ChevronUp, Zap, Key, Globe, Activity, Wifi, User,
-  Lock, Code, Eye, Split, FileCode, CheckCircle, Info, X, AlertTriangle, Layers
+  Lock, Code, Eye, Split, FileCode, CheckCircle, Info, X, AlertTriangle, Layers, Copy
 } from 'lucide-react'
 import api from './api.js'
 import socketClient from './socket.js'
@@ -787,6 +787,7 @@ ${DEFAULT_HTML_BODY}`
   const [pmtaMonitorPort, setPmtaMonitorPort] = useState(1983)
 
   const [showDnsModal, setShowDnsModal] = useState(false)
+  const [copiedRecord, setCopiedRecord] = useState(null)
 
   // Step 3 Configuration Customization & Config Editor
   const [useCustomConfig, setUseCustomConfig] = useState(false)
@@ -999,6 +1000,22 @@ http-access           0.0.0.0/0 monitor
         alert("Failed to uninstall: " + err.message)
       }
     }
+  }
+
+  const copyToClipboard = (text, label) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedRecord(label)
+      setTimeout(() => setCopiedRecord(null), 2000)
+    }).catch(() => {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      setCopiedRecord(label)
+      setTimeout(() => setCopiedRecord(null), 2000)
+    })
   }
 
   return (
@@ -3584,9 +3601,18 @@ http-access           0.0.0.0/0 monitor
                   <span>SPF (TXT Record)</span>
                   <span>Host: @</span>
                 </div>
-                <pre className="text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                  {`v=spf1 ip4:${pmtaPrimaryIp} ${pmtaSecondaryIps.split('\n').map(ip => `ip4:${ip.trim()}`).join(' ')} -all`}
-                </pre>
+                <div className="flex items-start gap-2">
+                  <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
+                    {`v=spf1 ip4:${pmtaPrimaryIp} ${pmtaSecondaryIps.split('\n').map(ip => `ip4:${ip.trim()}`).join(' ')} -all`}
+                  </pre>
+                  <button
+                    onClick={() => copyToClipboard(`v=spf1 ip4:${pmtaPrimaryIp} ${pmtaSecondaryIps.split('\n').map(ip => `ip4:${ip.trim()}`).join(' ')} -all`, 'spf')}
+                    className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
+                    title="Copy SPF record"
+                  >
+                    {copiedRecord === 'spf' ? <Check className="w-3.5 h-3.5 text-brand-green" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
               </div>
 
               {/* DKIM Record */}
@@ -3595,9 +3621,18 @@ http-access           0.0.0.0/0 monitor
                   <span>DKIM (TXT Record)</span>
                   <span>Host: {dkimSelector}._domainkey</span>
                 </div>
-                <pre className="text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                  {`v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G4sFvG1X6V...[2048-bit Private Public Key Pair Auto Generated]`}
-                </pre>
+                <div className="flex items-start gap-2">
+                  <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
+                    {`v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G4sFvG1X6V...[2048-bit Private Public Key Pair Auto Generated]`}
+                  </pre>
+                  <button
+                    onClick={() => copyToClipboard(`v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G4sFvG1X6V...[2048-bit Private Public Key Pair Auto Generated]`, 'dkim')}
+                    className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
+                    title="Copy DKIM record"
+                  >
+                    {copiedRecord === 'dkim' ? <Check className="w-3.5 h-3.5 text-brand-green" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
               </div>
 
               {/* DMARC Record */}
@@ -3606,9 +3641,18 @@ http-access           0.0.0.0/0 monitor
                   <span>DMARC (TXT Record)</span>
                   <span>Host: _dmarc</span>
                 </div>
-                <pre className="text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                  {`v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc-reports@${sendingDomain}`}
-                </pre>
+                <div className="flex items-start gap-2">
+                  <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
+                    {`v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc-reports@${sendingDomain}`}
+                  </pre>
+                  <button
+                    onClick={() => copyToClipboard(`v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc-reports@${sendingDomain}`, 'dmarc')}
+                    className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
+                    title="Copy DMARC record"
+                  >
+                    {copiedRecord === 'dmarc' ? <Check className="w-3.5 h-3.5 text-brand-green" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
               </div>
 
               {/* MX Record */}
@@ -3617,9 +3661,18 @@ http-access           0.0.0.0/0 monitor
                   <span>MX Record</span>
                   <span>Host: @ (Priority: 10)</span>
                 </div>
-                <pre className="text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                  {pmtaHostname}
-                </pre>
+                <div className="flex items-start gap-2">
+                  <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
+                    {pmtaHostname}
+                  </pre>
+                  <button
+                    onClick={() => copyToClipboard(pmtaHostname, 'mx')}
+                    className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
+                    title="Copy MX record"
+                  >
+                    {copiedRecord === 'mx' ? <Check className="w-3.5 h-3.5 text-brand-green" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
               </div>
             </div>
 
