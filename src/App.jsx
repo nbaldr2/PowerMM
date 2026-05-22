@@ -804,8 +804,9 @@ http-access           0.0.0.0/0 monitor
 # ─────────────────────────────────────────────
 # SMTP AUTHENTICATION CREDENTIALS
 # ─────────────────────────────────────────────
-smtp-auth-username    {{ SMTP_USERNAME }}
-smtp-auth-password    {{ SMTP_PASSWORD }}
+<smtp-user {{ SMTP_USERNAME }}>
+    password {{ SMTP_PASSWORD }}
+</smtp-user>
 
 # ─────────────────────────────────────────────
 # RELAY / SOURCE RULES
@@ -817,8 +818,8 @@ smtp-auth-password    {{ SMTP_PASSWORD }}
 <source 0.0.0.0/0>
     always-allow-relaying no
     smtp-service       yes
-    smtp-auth-username {{ SMTP_USERNAME }}
-    smtp-auth-password {{ SMTP_PASSWORD }}
+    smtp-port          {{ smtp_port }}
+    require-auth       yes
 </source>
 
 # ─────────────────────────────────────────────
@@ -3133,8 +3134,9 @@ http-access           0.0.0.0/0 monitor
 # ─────────────────────────────────────────────
 # SMTP AUTHENTICATION CREDENTIALS
 # ─────────────────────────────────────────────
-smtp-auth-username    {{ SMTP_USERNAME }}
-smtp-auth-password    {{ SMTP_PASSWORD }}
+<smtp-user {{ SMTP_USERNAME }}>
+    password {{ SMTP_PASSWORD }}
+</smtp-user>
 
 # ─────────────────────────────────────────────
 # RELAY / SOURCE RULES
@@ -3146,8 +3148,8 @@ smtp-auth-password    {{ SMTP_PASSWORD }}
 <source 0.0.0.0/0>
     always-allow-relaying no
     smtp-service       yes
-    smtp-auth-username {{ SMTP_USERNAME }}
-    smtp-auth-password {{ SMTP_PASSWORD }}
+    smtp-port          {{ smtp_port }}
+    require-auth       yes
 </source>
 
 # ─────────────────────────────────────────────
