@@ -603,8 +603,12 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
 
     send('Starting PowerMTA service...');
     await sshExecSafe('chkconfig --add pmta 2>/dev/null || systemctl daemon-reload 2>/dev/null || true');
-    await sshExecSafe('service pmta start 2>&1 || pmtad 2>&1 &', 30000);
-    await sshExecSafe('service pmtahttp start 2>&1 || pmtahttpd 2>&1 &', 15000);
+    await sshExecSafe('service pmta start 2>&1 || pmtad 2>&1 &', 60000);
+    try {
+      await sshExecSafe('service pmtahttp start 2>&1 || nohup pmtahttpd >/dev/null 2>&1 &', 30000);
+    } catch {
+      send('pmtahttp could not be started (non-critical). PowerMTA core daemon is running.');
+    }
     send('PowerMTA service started');
 
     send('Configuring firewall...');
