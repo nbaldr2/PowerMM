@@ -149,23 +149,23 @@ router.post('/test-ssh', authenticate, authorize('admin'), async (req, res) => {
   conn.connect(connOpts);
 });
 
-// POST /pmta/config — save PMTA configuration
 router.post('/config', authenticate, authorize('admin'), validate(schemas.pmtaConfig), async (req, res) => {
   const d = req.validated;
-  const passEncrypted = d.smtp_pass ? encrypt(d.smtp_pass) : null;
+  const smtpPassEncrypted = d.smtp_pass ? encrypt(d.smtp_pass) : null;
+  const sshPassEncrypted = d.ssh_password ? encrypt(d.ssh_password) : null;
+  const sshKeyEncrypted = d.ssh_private_key ? encrypt(d.ssh_private_key) : null;
 
-  // Generate DKIM keypair
   const keypair = forge.pki.rsa.generateKeyPair({ bits: 2048 });
   const privateKeyPem = forge.pki.privateKeyToPem(keypair.privateKey);
   const publicKeyPem = forge.pki.publicKeyToPem(keypair.publicKey);
-  // Extract the base64 content for DNS TXT record
   const publicKeyBase64 = publicKeyPem.replace(/-----BEGIN PUBLIC KEY-----/, '').replace(/-----END PUBLIC KEY-----/, '').replace(/\n/g, '');
 
   const { rows } = await query(
     `INSERT INTO pmta_configs (user_id, server_name, ssh_host, ssh_port, ssh_user, domain, hostname,
        primary_ip, secondary_ips, dkim_selector, dkim_private_key, dkim_public_key,
-       smtp_user, smtp_pass_encrypted, smtp_port, monitor_port, config_text, isp_rules)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       smtp_user, smtp_pass_encrypted, smtp_port, monitor_port, config_text, isp_rules,
+       ssh_pass_encrypted, ssh_key_encrypted)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
      ON CONFLICT (user_id) DO UPDATE SET
        server_name = EXCLUDED.server_name,
        ssh_host = EXCLUDED.ssh_host,
@@ -184,13 +184,16 @@ router.post('/config', authenticate, authorize('admin'), validate(schemas.pmtaCo
        monitor_port = EXCLUDED.monitor_port,
        config_text = EXCLUDED.config_text,
        isp_rules = EXCLUDED.isp_rules,
+       ssh_pass_encrypted = EXCLUDED.ssh_pass_encrypted,
+       ssh_key_encrypted = EXCLUDED.ssh_key_encrypted,
        updated_at = NOW()
      RETURNING *`,
     [req.user.id, d.server_name || 'Default', d.ssh_host, d.ssh_port, d.ssh_user,
      d.domain, d.hostname || d.domain, d.primary_ip, d.secondary_ips || '',
      d.dkim_selector, privateKeyPem, publicKeyBase64,
-     d.smtp_user || '', passEncrypted, d.smtp_port, d.monitor_port,
-     d.config_text || '', JSON.stringify(d.isp_rules || [])]
+     d.smtp_user || '', smtpPassEncrypted, d.smtp_port, d.monitor_port,
+     d.config_text || '', JSON.stringify(d.isp_rules || []),
+     sshPassEncrypted, sshKeyEncrypted]
   );
 
   res.status(201).json({ config: rows[0], dkimPublicKey: publicKeyBase64 });
@@ -248,12 +251,17 @@ router.post('/service/:action', authenticate, authorize('admin'), async (req, re
 });
 
 router.post('/install', authenticate, authorize('admin'), async (req, res) => {
-  const session = sshSessions.get(req.user.id);
-  if (!session) return res.status(400).json({ error: 'No active SSH session. Connect via Step 1 first.' });
-
   const { rows } = await query('SELECT * FROM pmta_configs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1', [req.user.id]);
   if (rows.length === 0) return res.status(400).json({ error: 'No PMTA config saved. Complete Step 2 first.' });
   const config = rows[0];
+
+  if (!config.ssh_host) {
+    return res.status(400).json({ error: 'SSH host not configured. Save config first.' });
+  }
+
+  if (!config.ssh_pass_encrypted && !config.ssh_key_encrypted) {
+    return res.status(400).json({ error: 'SSH credentials not saved. Re-connect and save config with password.' });
+  }
 
   res.json({ message: 'Installation started. Watch progress via live events.' });
 
@@ -263,9 +271,11 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     emitToUser(req.user.id, 'pmta:progress', { ...body });
   };
 
+  const conn = new SSHClient();
+  let sshConnected = false;
+
   const sshExecSafe = async (cmd, timeout = 60000) => {
     return new Promise((resolve, reject) => {
-      refreshSshTimeout(req.user.id);
       let streamRef = null;
       let finished = false;
       const timer = setTimeout(() => {
@@ -275,7 +285,7 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
         try { streamRef?.end?.(); } catch {}
         reject(new Error(`Command timeout: ${cmd.substring(0, 50)}...`));
       }, timeout);
-      session.conn.exec(cmd, (err, stream) => {
+      conn.exec(cmd, (err, stream) => {
         streamRef = stream;
         if (err) { clearTimeout(timer); finished = true; return reject(err); }
         let stdout = '', stderr = '';
@@ -291,7 +301,50 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     });
   };
 
+  const connectSsh = () => {
+    return new Promise((resolve, reject) => {
+      const sanitizedHost = config.ssh_host.replace(/[^\w.-]/g, '');
+      const sanitizedPort = Math.min(Math.max(config.ssh_port || 22, 1), 65535);
+      const sanitizedUsername = (config.ssh_user || 'root').replace(/[^\w.-]/g, '');
+
+      const connOpts = {
+        host: sanitizedHost,
+        port: sanitizedPort,
+        username: sanitizedUsername,
+        readyTimeout: 30000,
+        keepaliveInterval: 30000,
+        keepaliveCountMax: 3
+      };
+
+      if (config.ssh_key_encrypted) {
+        try {
+          connOpts.privateKey = decrypt(config.ssh_key_encrypted);
+        } catch {}
+      }
+      if (config.ssh_pass_encrypted) {
+        try {
+          connOpts.password = decrypt(config.ssh_pass_encrypted);
+        } catch {}
+      }
+
+      conn.on('ready', () => {
+        sshConnected = true;
+        resolve();
+      });
+
+      conn.on('error', (err) => {
+        reject(new Error(`SSH connection failed: ${err.message}`));
+      });
+
+      conn.connect(connOpts);
+    });
+  };
+
   try {
+    send('Connecting to target VPS via SSH...');
+    await connectSsh();
+    send(`Connected to ${config.ssh_host}`);
+
     send('Detecting operating system...');
     const { stdout: osInfo } = await sshExecSafe('cat /etc/os-release | head -10 && uname -m');
     send(`OS: ${osInfo.trim().split('\n')[0]}`);
@@ -361,10 +414,6 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     send('License installed');
 
     send('Generating DKIM keypair...');
-    const { rows: [updatedConfig] } = await query(
-      'SELECT * FROM pmta_configs WHERE id = $1',
-      [config.id]
-    );
     const dkimPath = `/etc/pmta/keys/${config.domain}.${config.dkim_selector}.pem`;
     await sshExecSafe(`mkdir -p /etc/pmta/keys`);
     await sshExecSafe(`openssl genrsa -out ${dkimPath} 2048 2>&1`);
@@ -373,7 +422,7 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     send(`DKIM key generated`);
 
     send('Writing PowerMTA configuration...');
-    let configText = updatedConfig.config_text || '';
+    let configText = config.config_text || '';
     configText = configText.replace(/\{\{\s*domain\s*\}\}/g, config.domain);
     configText = configText.replace(/\{\{\s*hostname\s*\}\}/g, config.hostname || config.domain);
     configText = configText.replace(/\{\{\s*primary_ip\s*\}\}/g, config.primary_ip);
@@ -409,7 +458,7 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     send('Configuring firewall...');
     const smtpPort = Number(config.smtp_port || 2525);
     const monitorPort = Number(config.monitor_port || 1983);
-const firewallCmd = `
+    const firewallCmd = `
 if command -v firewall-cmd >/dev/null 2>&1; then
   firewall-cmd --permanent --add-port=25/tcp >/dev/null 2>&1 || true
   firewall-cmd --permanent --add-port=80/tcp >/dev/null 2>&1 || true
@@ -472,6 +521,10 @@ fi | grep -E ':(${smtpPort}|${monitorPort})' || echo "Ports not yet bound"
   } catch (err) {
     send({ message: `Error: ${err.message}`, success: false, done: true });
     logger.error('PMTA install error:', err);
+  } finally {
+    if (sshConnected) {
+      try { conn.end(); } catch {}
+    }
   }
 });
 

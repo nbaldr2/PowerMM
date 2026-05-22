@@ -1,0 +1,42 @@
+# PowerMTA 5.0r8 — ALMALINUX / RHEL / CentOS Install Commands
+# Files served by PowerMM API at /pmta-files/, downloaded by installer via SSH
+
+# ── 1. Download PowerMTA5.zip ───────────────────────────────────────────────
+# curl -sSL "http://<PowerMM-SERVER-IP>/pmta-files/PowerMTA5.zip" -o /root/PowerMTA5.zip
+
+# ── 2. Create directories ────────────────────────────────────────────────────
+mkdir -p /root/PMTA /etc/pmta/keys /var/spool/pmta /var/log/pmta
+
+# ── 3. Install dependencies ──────────────────────────────────────────────────
+yum install -y openssl curl wget unzip 2>/dev/null || dnf install -y openssl curl wget unzip
+
+# ── 4. Extract PowerMTA5.zip ─────────────────────────────────────────────────
+cd /root/PMTA
+unzip -o /root/PowerMTA5.zip
+
+# ── 5. Install RPMs ──────────────────────────────────────────────────────────
+rpm -ivh PowerMTA-5.0r8*.rpm
+
+# ── 6. Stop existing services ────────────────────────────────────────────────
+service pmta stop 2>/dev/null || true
+service pmtahttp stop 2>/dev/null || true
+pkill -f pmtad 2>/dev/null || true
+pkill -f pmtahttpd 2>/dev/null || true
+
+# ── 7. Patch binaries ────────────────────────────────────────────────────────
+rm -rf /usr/sbin/pmtad /usr/sbin/pmtahttpd
+cp -f usr/sbin/pmtad /usr/sbin/
+cp -f usr/sbin/pmtahttpd /usr/sbin/
+chmod -R 777 /usr/sbin/pmta /usr/sbin/pmtad /usr/sbin/pmtahttpd
+
+# ── 8. Install license ───────────────────────────────────────────────────────
+cp license /etc/pmta/license
+
+# ── 9. Start PowerMTA ────────────────────────────────────────────────────────
+service pmta start
+service pmtahttp start
+
+# ── 10. Apply config & reload ─────────────────────────────────────────────────
+# vi /etc/pmta/config
+service pmta reload
+service pmta restart

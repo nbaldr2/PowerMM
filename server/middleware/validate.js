@@ -119,6 +119,8 @@ export const schemas = {
     ssh_host: z.string().min(1),
     ssh_port: z.number().int().default(22),
     ssh_user: z.string().default('root'),
+    ssh_password: z.string().optional(),
+    ssh_private_key: z.string().optional(),
     domain: z.string().min(1),
     hostname: z.string().optional(),
     primary_ip: z.string().min(1),
