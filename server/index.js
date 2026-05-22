@@ -125,22 +125,13 @@ if (fs.existsSync(pmtaFilesPath)) {
   app.use('/pmta-files', express.static(pmtaFilesPath));
 }
 
-// Serve PowerMTA5.zip directly from project root
+// Serve PowerMTA5.zip directly from project root if present
 const pmtaZipPath = path.join(__dirname, '..', 'PowerMTA5.zip');
 if (fs.existsSync(pmtaZipPath)) {
-  app.use('/pmta-files/PowerMTA5.zip', express.static(pmtaZipPath));
+  app.get('/pmta-files/PowerMTA5.zip', (req, res) => {
+    res.download(pmtaZipPath);
+  });
 }
-
-// Also serve individual RPMs from the extracted directory
-app.get('/pmta-files/:filename(*)', (req, res, next) => {
-  if (req.params.filename && req.params.filename.endsWith('.rpm')) {
-    const filePath = path.join(pmtaFilesPath, req.params.filename);
-    if (fs.existsSync(filePath)) {
-      return res.download(filePath);
-    }
-  }
-  next();
-});
 
 // Serve frontend build (production)
 const distPath = path.join(__dirname, '..', 'dist');
