@@ -108,10 +108,12 @@ function App() {
         if (payload.success) {
           setInstallSuccess(true)
           setMailOk(true)
-          api.getPmtaConfig().then(d => {
-            const pub = d?.config?.dkim_public_key
-            if (pub) setDkimPublicKey(pub)
-          }).catch(() => {})
+          setTimeout(() => {
+            api.getPmtaConfig().then(d => {
+              const pub = d?.config?.dkim_public_key
+              if (pub) setDkimPublicKey(pub)
+            }).catch(() => {})
+          }, 2000)
         } else {
           setInstallSuccess(false)
         }
@@ -1024,7 +1026,7 @@ http-access           0.0.0.0/0 monitor
   const spfValue = `v=spf1 ip4:${pmtaPrimaryIp} ${pmtaSecondaryIps.split('\n').map(ip => 'ip4:' + ip.trim()).join(' ')} -all`
   const dkimValue = dkimPublicKey
     ? `v=DKIM1; k=rsa; p=${dkimPublicKey}`
-    : `v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G4sFvG1X6V...[2048-bit Private Public Key Pair Auto Generated]`
+    : `v=DKIM1; k=rsa; p=[Will appear after installation — run installer first]`
   const dmarcValue = `v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc-reports@${sendingDomain}`
 
   return (
