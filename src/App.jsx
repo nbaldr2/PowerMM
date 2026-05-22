@@ -108,6 +108,10 @@ function App() {
         if (payload.success) {
           setInstallSuccess(true)
           setMailOk(true)
+          api.getPmtaConfig().then(d => {
+            const pub = d?.config?.dkim_public_key
+            if (pub) setDkimPublicKey(pub)
+          }).catch(() => {})
         } else {
           setInstallSuccess(false)
         }
@@ -778,7 +782,7 @@ ${DEFAULT_HTML_BODY}`
   const [sendingDomain, setSendingDomain] = useState('mycompany-secure-renew.co.uk')
   const [pmtaHostname, setPmtaHostname] = useState('mail.mycompany-secure-renew.co.uk')
   const [pmtaPrimaryIp, setPmtaPrimaryIp] = useState('')
-  const [dkimSelector, setDkimSelector] = useState('dkim')
+  const [dkimSelector, setDkimSelector] = useState('default')
   const [pmtaSecondaryIps, setPmtaSecondaryIps] = useState("")
 
   const [pmtaSmtpUser, setPmtaSmtpUser] = useState('pmta-relay-user')
@@ -788,6 +792,7 @@ ${DEFAULT_HTML_BODY}`
 
   const [showDnsModal, setShowDnsModal] = useState(false)
   const [copiedRecord, setCopiedRecord] = useState(null)
+  const [dkimPublicKey, setDkimPublicKey] = useState('')
 
   // Step 3 Configuration Customization & Config Editor
   const [useCustomConfig, setUseCustomConfig] = useState(false)
@@ -1017,7 +1022,9 @@ http-access           0.0.0.0/0 monitor
   }
 
   const spfValue = `v=spf1 ip4:${pmtaPrimaryIp} ${pmtaSecondaryIps.split('\n').map(ip => 'ip4:' + ip.trim()).join(' ')} -all`
-  const dkimValue = 'v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G4sFvG1X6V...[2048-bit Private Public Key Pair Auto Generated]'
+  const dkimValue = dkimPublicKey
+    ? `v=DKIM1; k=rsa; p=${dkimPublicKey}`
+    : `v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0G4sFvG1X6V...[2048-bit Private Public Key Pair Auto Generated]`
   const dmarcValue = `v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc-reports@${sendingDomain}`
 
   return (
@@ -3594,6 +3601,23 @@ http-access           0.0.0.0/0 monitor
             <p className="text-xs text-brand-text leading-relaxed">
               Copy and paste these TXT/MX records into your DNS Registrar (GoDaddy, Cloudflare, etc.) to pass anti-spam checks.
             </p>
+
+            {/* Credentials Summary */}
+            {installSuccess && (
+              <div className="bg-brand-green/10 p-3 rounded-lg border border-brand-green/30 space-y-1.5">
+                <div className="font-bold text-brand-green text-xs tracking-wider">INSTALLATION COMPLETE — CONNECTION DETAILS</div>
+                <div className="space-y-0.5 text-[11px] font-mono text-brand-text-bright">
+                  <div><span className="text-brand-cyan">SMTP Host:</span> {sshHost || pmtaHostname}</div>
+                  <div><span className="text-brand-cyan">SMTP Port:</span> {pmtaSmtpPort}</div>
+                  <div><span className="text-brand-cyan">SMTP Username:</span> {pmtaSmtpUser}</div>
+                  <div><span className="text-brand-cyan">SMTP Password:</span> {pmtaSmtpPass}</div>
+                  <div><span className="text-brand-cyan">Monitor URL:</span> http://{pmtaPrimaryIp}:{pmtaMonitorPort}/</div>
+                  <div><span className="text-brand-cyan">Sending Domain:</span> {sendingDomain}</div>
+                  <div><span className="text-brand-cyan">Hostname:</span> {pmtaHostname}</div>
+                  <div><span className="text-brand-cyan">DKIM Selector:</span> {dkimSelector}._domainkey.{sendingDomain}</div>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-3 font-mono text-[10px]">
 
