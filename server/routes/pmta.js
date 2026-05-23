@@ -504,22 +504,19 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
 
       send('Checking /root/pmta_files/ on target system...');
       const { stdout: dirCheck } = await sshExecSafe('ls -A /root/pmta_files/ 2>&1 || echo DIRECTORY_NOT_FOUND', 10000);
-      const isEmpty = !dirCheck.includes('pmta') && !dirCheck.includes('PowerMTA');
-      if (dirCheck.includes('DIRECTORY_NOT_FOUND') || dirCheck.includes('No such file') || isEmpty) {
-        if (isEmpty && !dirCheck.includes('DIRECTORY_NOT_FOUND')) {
-          send('/root/pmta_files/ exists but is empty. Uploading files...');
-        } else {
-          send('/root/pmta_files/ not found. Uploading from master server...');
-        }
+      const targetEmpty = !dirCheck.includes('pmta') && !dirCheck.includes('PowerMTA');
+      if (dirCheck.includes('DIRECTORY_NOT_FOUND') || dirCheck.includes('No such file') || targetEmpty) {
+        send('/root/pmta_files/ missing or empty on target. Uploading from master server...');
         await sshExecSafe('mkdir -p /root/pmta_files').catch(() => {});
-        const pmtaExtractedDir = path.join(projectRoot, 'PowerMTA5.0r8_ALMALINUX');
         let uploaded = false;
         try {
-          await fs.access(pmtaExtractedDir);
-          const entries = await fs.readdir(pmtaExtractedDir, { withFileTypes: true });
+          const masterDir = '/root/pmta_files/';
+          await fs.access(masterDir).catch(() => { throw new Error('Master /root/pmta_files/ not found'); });
+          const entries = await fs.readdir(masterDir, { withFileTypes: true });
+          if (entries.length === 0) throw new Error('Master /root/pmta_files/ is empty');
           for (const entry of entries) {
             if (entry.name.startsWith('.')) continue;
-            const localPath = path.join(pmtaExtractedDir, entry.name);
+            const localPath = path.join(masterDir, entry.name);
             const remotePath = `/root/pmta_files/${entry.name}`;
             if (entry.isFile()) {
               send(`Uploading ${entry.name}...`);
@@ -529,12 +526,14 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
             }
           }
           uploaded = true;
-        } catch {
+        } catch (err) {
+          send(`Upload failed: ${err.message}`);
+          const zipPath = path.join(projectRoot, 'PowerMTA5.zip');
           try {
-            await fs.access(path.join(projectRoot, 'PowerMTA5.zip'));
-            send('Extracted directory not found, uploading zip and extracting...');
+            await fs.access(zipPath);
+            send('Falling back to zip upload and extraction...');
             await sshExecSafe('rm -f /root/PowerMTA5.zip').catch(() => {});
-            await uploadFileViaSftp(conn, path.join(projectRoot, 'PowerMTA5.zip'), '/root/PowerMTA5.zip');
+            await uploadFileViaSftp(conn, zipPath, '/root/PowerMTA5.zip');
             await sshExecSafe('mkdir -p /root/pmta_files && cd /root/pmta_files && unzip -o /root/PowerMTA5.zip 2>/dev/null || (command -v bsdtar >/dev/null 2>&1 && bsdtar -xf /root/PowerMTA5.zip -C /root/pmta_files)', 180000);
             uploaded = true;
           } catch {}
