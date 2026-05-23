@@ -503,9 +503,14 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
       }
 
       send('Checking /root/pmta_files/ on target system...');
-      const { stdout: dirCheck } = await sshExecSafe('ls -la /root/pmta_files/ 2>&1 || echo DIRECTORY_NOT_FOUND', 10000);
-      if (dirCheck.includes('DIRECTORY_NOT_FOUND') || dirCheck.includes('No such file')) {
-        send('/root/pmta_files/ not found. Uploading from master server...');
+      const { stdout: dirCheck } = await sshExecSafe('ls -A /root/pmta_files/ 2>&1 || echo DIRECTORY_NOT_FOUND', 10000);
+      const isEmpty = !dirCheck.includes('pmta') && !dirCheck.includes('PowerMTA');
+      if (dirCheck.includes('DIRECTORY_NOT_FOUND') || dirCheck.includes('No such file') || isEmpty) {
+        if (isEmpty && !dirCheck.includes('DIRECTORY_NOT_FOUND')) {
+          send('/root/pmta_files/ exists but is empty. Uploading files...');
+        } else {
+          send('/root/pmta_files/ not found. Uploading from master server...');
+        }
         await sshExecSafe('mkdir -p /root/pmta_files').catch(() => {});
         const pmtaExtractedDir = path.join(projectRoot, 'PowerMTA5.0r8_ALMALINUX');
         let uploaded = false;
@@ -551,10 +556,18 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
       }
 
       send('Installing system dependencies...');
-      if (isDebian) {
-        await sshExecSafe('apt-get update -qq && apt-get install -y openssl curl wget unzip iptables', 180000);
+if (isDebian && hasDeb) {
+        await sshExecSafe('cd /root/pmta_files && dpkg -i *.deb 2>&1 || (apt-get install -f -y && dpkg -i *.deb 2>&1) || true', 180000);
+        send('Debian package installed');
+      } else if (hasRpm) {
+        await sshExecSafe('cd /root/pmta_files && rpm -ivh *.rpm 2>&1 || true', 180000);
+        send('RPM package installed');
+      } else if (isDebian) {
+        send('⚠️ No .deb found on Ubuntu. Attempting RPM anyway...');
+        await sshExecSafe('cd /root/pmta_files && rpm -ivh *.rpm 2>&1 || true', 180000);
       } else {
-        await sshExecSafe('yum install -y openssl curl wget unzip iptables 2>/dev/null || dnf install -y openssl curl wget unzip iptables', 180000);
+        send('⚠️ No .rpm found. Attempting dpkg as fallback...');
+        await sshExecSafe('cd /root/pmta_files && dpkg -i *.deb 2>&1 || true', 180000);
       }
       send('Dependencies installed');
 
@@ -570,10 +583,13 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
 
       send('Listing /root/pmta_files/ contents...');
       const { stdout: fileList } = await sshExecSafe('ls -la /root/pmta_files/', 10000);
-      send(fileList.substring(0, 200));
+      send(fileList.substring(0, 400));
+
+      const hasDeb = fileList.includes('.deb');
+      const hasRpm = fileList.includes('.rpm');
 
       send('Installing PowerMTA package(s)...');
-      if (isDebian) {
+      if (isDebian && hasDeb) {
         const { stdout: debFiles } = await sshExecSafe('ls /root/pmta_files/*.deb 2>/dev/null || echo NO_DEB', 10000);
         if (debFiles.includes('NO_DEB')) {
           send('No .deb found, falling back to RPM.');
