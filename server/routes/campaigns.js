@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query, transaction } from '../config/database.js';
 import { authenticate, authorize, checkQuota } from '../middleware/auth.js';
 import { validate, schemas } from '../middleware/validate.js';
+import { encrypt, decrypt } from '../utils/encryption.js';
 import { Queue } from 'bullmq';
 import redis from '../config/redis.js';
 import logger from '../utils/logger.js';
@@ -109,7 +110,7 @@ router.post('/:id/send', authenticate, authorize('admin', 'operator'), checkQuot
     if (!campaign.list_id) return res.status(400).json({ error: 'No recipient list assigned' });
     if (!campaign.html_body) return res.status(400).json({ error: 'No email body' });
 
-    // Check SMTP
+    // Check SMTP — auto-create from PMTA if none found
     let smtpOk = false;
     if (campaign.smtp_server_id) {
       const { rows: sr } = await query('SELECT id FROM smtp_servers WHERE id = $1 AND is_enabled = TRUE', [campaign.smtp_server_id]);
@@ -121,7 +122,31 @@ router.post('/:id/send', authenticate, authorize('admin', 'operator'), checkQuot
       );
       smtpOk = sr.length > 0;
     }
-    if (!smtpOk) return res.status(400).json({ error: 'No active SMTP server configured' });
+
+    if (!smtpOk) {
+      // Try auto-creating from PMTA config
+      const { rows: pmtaRows } = await query(
+        'SELECT * FROM pmta_configs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
+        [req.user.id]
+      );
+      if (pmtaRows.length > 0) {
+        const pmta = pmtaRows[0];
+        const password = pmta.smtp_pass_encrypted ? decrypt(pmta.smtp_pass_encrypted) : '';
+        if (pmta.ssh_host && password) {
+          await query(
+            `INSERT INTO smtp_servers (user_id, host, port, username, password_encrypted, pool_name, name, daily_limit, is_enabled)
+             VALUES ($1, $2, $3, $4, $5, 'default', $6, 100000, TRUE)`,
+            [req.user.id, pmta.ssh_host, pmta.smtp_port || 2525,
+             pmta.smtp_user || 'pmta-relay-user',
+             encrypt(password),
+             `PMTA ${pmta.domain || pmta.ssh_host}`]
+          );
+          smtpOk = true;
+        }
+      }
+    }
+
+    if (!smtpOk) return res.status(400).json({ error: 'No active SMTP server configured. Install PowerMTA first or add SMTP in settings.' });
 
     // Check quota
     if (req.userQuota && req.userQuota.remaining < campaign.total_recipients) {

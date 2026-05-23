@@ -111,16 +111,19 @@ function App() {
               const cfg = d?.config
               if (cfg?.dkim_public_key) setDkimPublicKey(cfg.dkim_public_key)
               if (cfg?.ssh_host) {
-                await api.addSmtpServer({
-                  host: cfg.ssh_host,
-                  port: Number(cfg.smtp_port) || 2525,
-                  username: cfg.smtp_user || 'pmta-relay-user',
-                  password: '[auto-configured-from-pmta]',
-                  encryption: 'NONE',
-                  name: `PMTA ${cfg.domain || cfg.ssh_host}`,
-                  pool_name: 'default',
-                  daily_limit: 100000,
-                }).catch(() => {})
+                const pmtaSmtp = await api.fillFromPmta().catch(() => null)
+                if (pmtaSmtp?.host) {
+                  await api.addSmtpServer({
+                    host: pmtaSmtp.host,
+                    port: Number(pmtaSmtp.port) || 2525,
+                    username: pmtaSmtp.username || 'pmta-relay-user',
+                    password: pmtaSmtp.password || '',
+                    encryption: (pmtaSmtp.encryption || 'NONE').toUpperCase(),
+                    name: `PMTA ${cfg.domain || cfg.ssh_host}`,
+                    pool_name: 'default',
+                    daily_limit: 100000,
+                  }).catch(() => {})
+                }
                 const servers = await api.getSmtpServers().catch(() => ({ servers: [] }))
                 if (servers.servers) setSmtpPool(servers.servers)
               }
@@ -733,6 +736,9 @@ ${DEFAULT_HTML_BODY}`
 
     } catch (err) {
       setSendLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] API Error: ${err.message}`])
+      if (err.message.includes('No active SMTP')) {
+        setSendLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ⚠️ No SMTP server configured. Use Fill from PMTA or add SMTP manually in settings.`])
+      }
       setSendingCampaign(false)
     }
   }
