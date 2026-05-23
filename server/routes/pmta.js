@@ -569,11 +569,18 @@ send('Installing system dependencies...');
       send('Package install complete');
       rollbackNeeded = true;
 
-      send('Copying binaries from /root/pmta_files/...');
-      await sshExecSafe('cp -f /root/pmta_files/pmtad /usr/sbin/pmtad 2>/dev/null || true').catch(() => {});
-      await sshExecSafe('cp -f /root/pmta_files/pmtahttpd /usr/sbin/pmtahttpd 2>/dev/null || true').catch(() => {});
-      await sshExecSafe('chmod 755 /usr/sbin/pmtad /usr/sbin/pmtahttpd').catch(() => {});
-      send('Binaries installed');
+      send('Copying binaries and license from /root/pmta_files/...');
+      await sshExecSafe('test -f /root/pmta_files/pmtad && cp -f /root/pmta_files/pmtad /usr/sbin/pmtad || echo "pmtad not found in source"').catch(() => {});
+      await sshExecSafe('test -f /root/pmta_files/pmtahttpd && cp -f /root/pmta_files/pmtahttpd /usr/sbin/pmtahttpd || echo "pmtahttpd not found in source"').catch(() => {});
+      await sshExecSafe('chmod +x /usr/sbin/pmtad 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('chmod +x /usr/sbin/pmtahttpd 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('test -f /root/pmta_files/license && cp -f /root/pmta_files/license /etc/pmta/license || echo "license not found in source"').catch(() => {});
+      send('Binaries and license installed');
+
+      send('Setting permissions...');
+      await sshExecSafe('chmod 600 /etc/pmta/config /etc/pmta/dkim.pem /etc/pmta/license 2>/dev/null || chmod 600 /etc/pmta/config /etc/pmta/dkim.pem').catch(() => {});
+      await sshExecSafe('chown -R pmta:pmta /etc/pmta 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('chown pmta:pmta /var/log/pmta 2>/dev/null || true').catch(() => {});
 
       send('Generating DKIM keypair...');
       await sshExecSafe('mkdir -p /etc/pmta && openssl genrsa -out /etc/pmta/dkim.pem 2048 2>&1', 30000).catch(() => {});
@@ -617,8 +624,8 @@ send('Installing system dependencies...');
       send('Configuration written to /etc/pmta/config');
 
       send('Starting PowerMTA daemon...');
-      await sshExecSafe('/usr/sbin/pmtad 2>&1 &', 15000).catch(() => {});
-      await sshExecSafe('nohup /usr/sbin/pmtahttpd >/dev/null 2>&1 &', 10000).catch(() => {});
+      await sshExecSafe('test -f /usr/sbin/pmtad && /usr/sbin/pmtad 2>&1 & || echo "pmtad not found at /usr/sbin/pmtad"', 15000).catch(() => {});
+      await sshExecSafe('test -f /usr/sbin/pmtahttpd && nohup /usr/sbin/pmtahttpd >/dev/null 2>&1 & || echo "pmtahttpd not found"', 10000).catch(() => {});
       send('PowerMTA services started');
 
       send('Configuring firewall...');
