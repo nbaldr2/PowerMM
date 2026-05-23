@@ -11,13 +11,15 @@ class SocketClient {
   connect(token) {
     if (this.socket?.connected) return;
 
-    this.socket = io(SOCKET_URL, {
-      auth: { token },
+    const opts = {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionAttempts: 10,
-    });
+    };
+    if (token) opts.auth = { token };
+
+    this.socket = io(SOCKET_URL, opts);
 
     for (const [event, callbacks] of this.listeners.entries()) {
       callbacks.forEach(cb => this.socket.on(event, cb));

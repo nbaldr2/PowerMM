@@ -81,19 +81,12 @@ function App() {
   const [phpVersion, setPhpVersion] = useState('7.4.33')
   const [mailOk, setMailOk] = useState(true)
 
-  // Auto-login for development
+  // Connect without login — backend allows guest access
   useEffect(() => {
-    api.login('admin@moonmailer.pro', 'admin123')
-      .then(data => {
-        console.log('✅ Authenticated as Admin:', data.user.email)
-        socketClient.connect(data.accessToken)
-      })
-      .catch(err => console.error('Authentication failed:', err))
-
+    socketClient.connect()
     api.getHealth().then(data => {
       if (data.status === 'healthy') setMailOk(true)
     }).catch(() => setMailOk(false))
-
     return () => socketClient.disconnect()
   }, [])
 
