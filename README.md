@@ -15,16 +15,41 @@ PowerMM is a PowerMTA auto-installer and management panel. It installs, configur
 
 ---
 
-## Installation (Master Server)
+## Full Installation (Master Server — Fresh AlmaLinux/Rocky)
 
-### 1. Clone the repository
+### 1. System dependencies
+
+```bash
+# Update system
+dnf update -y
+
+# Install Node.js 20+
+dnf install -y nodejs npm
+
+# Install PostgreSQL 14+
+dnf install -y postgresql-server postgresql-contrib
+
+# Install Redis 6+
+dnf install -y redis
+
+# Install other tools
+dnf install -y git curl wget unzip openssl nginx
+
+# Verify versions
+node --version   # Should be v20+
+npm --version    # Should be 10+
+psql --version   # Should be 14+
+redis-cli --version  # Should be 6+
+```
+
+### 2. Clone the repository
 
 ```bash
 git clone https://github.com/nbaldr2/PowerMM.git /var/www/powermm
 cd /var/www/powermm
 ```
 
-### 2. Install dependencies
+### 3. Install project dependencies
 
 ```bash
 # Frontend
@@ -34,73 +59,210 @@ npm install
 cd server && npm install && cd ..
 ```
 
-### 3. Configure environment
+### 4. Configure PostgreSQL
+
+```bash
+# Initialize database
+postgresql-setup --initdb
+
+# Start PostgreSQL
+systemctl enable postgresql
+systemctl start postgresql
+
+# Create database and user
+su - postgres -c "psql -c \"CREATE USER powermm WITH PASSWORD 'powermm_secret';\""
+su - postgres -c "psql -c \"CREATE DATABASE powermm OWNER powermm;\""
+su - postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE powermm TO powermm;\""
+
+# Configure PostgreSQL to accept password connections
+sed -i 's/peer/md5/g' /var/lib/pgsql/data/pg_hba.conf
+sed -i 's/ident/md5/g' /var/lib/pgsql/data/pg_hba.conf
+
+# Restart to apply
+systemctl restart postgresql
+```
+
+### 5. Configure Redis
+
+```bash
+systemctl enable redis
+systemctl start redis
+
+# Test connection
+redis-cli ping
+# Should return: PONG
+```
+
+### 6. Environment configuration
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your credentials:
-
-| Variable | Description |
-|----------|-------------|
-| `NODE_ENV` | `production` |
-| `PORT` | Backend port (default `3001`) |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `REDIS_URL` | Redis connection string |
-| `JWT_SECRET` | Generate with `openssl rand -hex 32` |
-| `JWT_REFRESH_SECRET` | Generate with `openssl rand -hex 32` |
-| `ENCRYPTION_KEY` | AES-256 key, 64 hex chars (`openssl rand -hex 32`) |
-
-### 4. Database setup
+Generate secure secrets:
 
 ```bash
-cd server
+echo "JWT_SECRET=$(openssl rand -hex 32)"
+echo "JWT_REFRESH_SECRET=$(openssl rand -hex 32)"
+echo "ENCRYPTION_KEY=$(openssl rand -hex 32)"
+```
+
+Edit `.env` with your values:
+
+```bash
+nano .env
+```
+
+Required values in `.env`:
+
+```
+NODE_ENV=production
+PORT=3001
+APP_URL=http://your-server-ip
+API_URL=http://your-server-ip:3001
+
+DATABASE_URL=postgresql://powermm:powermm_secret@localhost:5432/powermm
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=powermm
+DB_USER=powermm
+DB_PASS=powermm_secret
+
+REDIS_URL=redis://localhost:6379
+
+JWT_SECRET=<paste generated hex>
+JWT_REFRESH_SECRET=<paste generated hex>
+JWT_ACCESS_EXPIRY=15m
+JWT_REFRESH_EXPIRY=7d
+
+ENCRYPTION_KEY=<paste generated hex>
+
+TRACKING_DOMAIN=http://your-domain.com
+SMTP_FROM_DEFAULT=noreply@your-domain.com
+UPLOAD_DIR=./uploads
+MAX_UPLOAD_SIZE=52428800
+```
+
+### 7. Run database migrations
+
+```bash
+cd /var/www/powermm/server
 npm run migrate
 ```
 
-This creates all required tables and seeds the default admin account:
-- **Email:** `admin@moonmailer.pro`
-- **Password:** `admin123`
+Expected output:
 
-### 5. Prepare PowerMTA installation files
+```
+PostgreSQL connected: ...
+Migration 001_init.sql already executed, skipping
+Migration 002_add_pmta_license.sql already executed, skipping
+Migration 003_fix_pmta_unique_constraint.sql already executed, skipping
+Migration 004_add_ssh_credentials.sql already executed, skipping
+All migrations complete
+```
+
+This creates all tables and seeds the default admin account:
+
+| Field | Value |
+|-------|-------|
+| **Email** | `admin@moonmailer.pro` |
+| **Password** | `admin123` |
+| **Role** | `admin` |
+| **Quota** | 1,000,000/day |
+
+### 8. Prepare PowerMTA installation files
 
 Place `PowerMTA5.zip` in the project root:
 
 ```bash
 # Copy the zip to the project root
 cp /path/to/PowerMTA5.zip /var/www/powermm/
+
+# Verify
+ls -la /var/www/powermm/PowerMTA5.zip
 ```
 
-Alternatively, set `PMTA_ZIP_URL` in `.env` to a download URL and the server will cache it automatically.
-
-The extracted directory `PowerMTA5.0r8_ALMALINUX/` is also used as a fallback.
-
-### 6. Start the server
+If the zip isn't available, the extracted directory can be used instead:
 
 ```bash
-# Using PM2 (recommended)
-pm2 start server/index.js --name powermm
-pm2 save
-
-# Or directly
-node server/index.js
+cp -r /path/to/PowerMTA5.0r8_ALMALINUX /var/www/powermm/
 ```
 
-### 7. Build and serve the frontend
+Alternatively, set `PMTA_ZIP_URL` in `.env` to a download URL — the server will cache it automatically on first install.
+
+### 9. Build the frontend
 
 ```bash
+cd /var/www/powermm
 npm run build
 ```
 
-The built frontend is automatically served by the Express backend from the `dist/` directory. Access it at `http://your-server-ip:3001`.
+Expected output:
 
-### 8. Configure nginx (optional but recommended)
+```
+vite v5.x.x building client environment for production...
+transforming...✓ XXXX modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.89 kB │ gzip:   0.50 kB
+dist/assets/index-xxx.css        40.86 kB │ gzip:   7.04 kB
+dist/assets/index-xxx.js        372.02 kB │ gzip: 101.16 kB
+✓ built in XXXms
+```
 
-```nginx
+### 10. Configure firewall
+
+```bash
+# Allow web traffic
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=3001/tcp
+
+# Reload
+firewall-cmd --reload
+
+# Verify
+firewall-cmd --list-ports
+```
+
+### 11. Start the application (PM2)
+
+```bash
+# Install PM2 globally
+npm install -g pm2
+
+# Start backend
+cd /var/www/powermm
+pm2 start server/index.js --name powermm
+pm2 save
+
+# Enable PM2 startup on boot
+pm2 startup
+# → Run the displayed command (usually: systemctl enable pm2-root)
+```
+
+Verify it's running:
+
+```bash
+pm2 list
+curl -s http://127.0.0.1:3001/health
+# Response: {"status":"healthy","timestamp":"...","uptime":...,"db":"connected","redis":"connected"}
+```
+
+### 12. Configure nginx reverse proxy (recommended)
+
+```bash
+# Remove default nginx config
+rm -f /etc/nginx/conf.d/default.conf
+rm -f /etc/nginx/sites-enabled/default
+
+# Create PowerMM config
+cat > /etc/nginx/conf.d/powermm.conf << 'EOF'
 server {
     listen 80;
     server_name your-domain.com;
+
+    client_max_body_size 100M;
 
     location / {
         proxy_pass http://127.0.0.1:3001;
@@ -109,9 +271,101 @@ server {
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
+
+        # Timeouts
+        proxy_connect_timeout 300;
+        proxy_send_timeout 300;
+        proxy_read_timeout 300;
+    }
+
+    # Increase body size for file uploads
+    location /uploads {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        client_max_body_size 100M;
     }
 }
+EOF
+
+# Start nginx
+systemctl enable nginx
+systemctl start nginx
+```
+
+### 13. HTTPS with Let's Encrypt (recommended)
+
+```bash
+# Install Certbot
+dnf install -y certbot python3-certbot-nginx
+
+# Get certificate
+certbot --nginx -d your-domain.com
+
+# Verify auto-renewal
+certbot renew --dry-run
+```
+
+### 14. Complete setup verification
+
+```bash
+# Check all services
+systemctl status postgresql --no-pager
+systemctl status redis --no-pager
+systemctl status nginx --no-pager
+pm2 status
+
+# Test full stack
+curl -s http://127.0.0.1:3001/health
+curl -s http://your-domain.com/health
+
+# Test login
+curl -s -X POST http://your-domain.com/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@moonmailer.pro","password":"admin123"}'
+# Response should include: {"user":{...},"accessToken":"..."}
+```
+
+### 15. Access the dashboard
+
+Open `http://your-domain.com` in your browser and log in with:
+- **Email:** `admin@moonmailer.pro`
+- **Password:** `admin123`
+
+---
+
+## Quick Deploy (Update an existing installation)
+
+```bash
+# Pull latest code
+cd /var/www/powermm
+git pull origin master
+
+# Install any new dependencies
+npm install
+cd server && npm install && cd ..
+
+# Run new migrations (if any)
+cd server && npm run migrate && cd ..
+
+# Rebuild frontend
+npm run build
+
+# Restart server
+pm2 restart powermm
+
+# Verify
+curl -s http://127.0.0.1:3001/health
+```
+
+---
+
+## One-liner full update
+
+```bash
+ssh root@your-server "cd /var/www/powermm && git pull && npm install && cd server && npm install && npm run migrate && cd .. && npm run build && pm2 restart powermm"
 ```
 
 ---
@@ -216,14 +470,90 @@ ssh root@your-master-server "cd /var/www/powermm && git pull && npm run build &&
 
 ## Troubleshooting
 
-| Issue | Cause | Fix |
-|-------|-------|-----|
-| `502 Bad Gateway` | Node server not running | `pm2 restart powermm` |
-| `Cannot GET /` | Frontend not built | `npm run build` |
-| SSH connection timeout | Wrong IP/port or firewall | Verify target VPS SSH access |
-| PMTA install hangs | Large file upload | Wait up to 3 minutes for zip upload |
-| `pmtahttpd` fails | Missing `log-file` in config | Rerun installer with updated template |
-| Monitor shows "Access denied" | HTTP monitor needs `http-access` directive | Config template includes it by default |
+### Server won't start
+
+```bash
+# Check PM2 logs
+pm2 logs powermm --lines 50
+
+# Check error log directly
+tail -100 /root/.pm2/logs/powermm-error.log
+tail -100 /root/.pm2/logs/powermm-out.log
+
+# Common fixes
+cd /var/www/powermm/server && npm install && npm run migrate && cd .. && npm run build && pm2 restart powermm
+```
+
+### 502 Bad Gateway (nginx)
+
+```bash
+# PM2 crashed — restart it
+pm2 restart powermm
+
+# nginx misconfigured — check config
+nginx -t
+systemctl restart nginx
+
+# Backend not listening — check port
+curl -s http://127.0.0.1:3001/health
+ss -tlnp | grep 3001
+```
+
+### Database connection failures
+
+```bash
+# Check PostgreSQL is running
+systemctl status postgresql
+
+# Test connection
+psql -U powermm -d powermm -h localhost -c "SELECT 1"
+
+# Reset password if needed
+su - postgres -c "psql -c \"ALTER USER powermm WITH PASSWORD 'new_password';\""
+```
+
+### Redis connection failures
+
+```bash
+systemctl status redis
+redis-cli ping  # Should return PONG
+```
+
+### PMTA installation fails on target VPS
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| SSH timeout | Wrong IP/port or firewall | Verify `ssh root@target-ip` works manually |
+| Zip upload hangs | Slow connection / large file | Wait up to 3 minutes; cancel and retry |
+| `pmtad` fails to start | Missing `log-file` in config | Rerun installer — template now includes it |
+| `pmtahttpd` fails to start | Missing `log-file` or bad directive | Check `/etc/pmta/config` on target VPS |
+| Monitor shows "Access denied" | No `http-access` directive | Config template has `http-access 0.0.0.0/0 monitor` |
+| `unknown directive` errors | Config uses wrong PMTA version syntax | Template is now PMTA 5.0r8 compatible |
+| `{{ SECONDARY_VMTA_... }}` left in config | No secondary IPs entered in wizard | Backend now strips placeholders when no secondaries |
+
+### Manual fix on target VPS
+
+If the target VPS config is broken, SSH in and fix it:
+
+```bash
+ssh root@target-vps
+
+# Check current config
+cat /etc/pmta/config
+
+# Fix common issues
+sed -i '/http-listener-port/d' /etc/pmta/config
+sed -i '/{{ SECONDARY/d' /etc/pmta/config
+
+# Restart services
+pkill -f pmtad 2>/dev/null
+pkill -f pmtahttpd 2>/dev/null
+sleep 1
+/usr/sbin/pmtad &
+/usr/sbin/pmtahttpd &
+sleep 2
+ss -tlnp | grep -E ':(25|2525|8080)'
+```
 
 ---
 
