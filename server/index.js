@@ -25,6 +25,7 @@ import pmtaRoutes from './routes/pmta.js';
 import analyticsRoutes from './routes/analytics.js';
 import ipCheckerRoutes from './routes/ipchecker.js';
 import spamCheckRoutes from './routes/spamcheck.js';
+import dnsRoutes from './routes/dns.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -113,6 +114,7 @@ app.use('/pmta', pmtaRoutes);
 app.use('/analytics', analyticsRoutes);
 app.use('/ipchecker', ipCheckerRoutes);
 app.use('/spamcheck', spamCheckRoutes);
+app.use('/api/dns', dnsRoutes);
 
 // Serve uploaded files
 const uploadsDir = path.join(__dirname, 'uploads');

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import api from './api.js'
 import socketClient from './socket.js'
+import DnsGenerator from './DnsGenerator.jsx'
 
 // Custom high-fidelity defaults
 const DEFAULT_HTML_BODY = `<!DOCTYPE html>
@@ -1076,6 +1077,14 @@ http-access           0.0.0.0/0 monitor
           >
             <Globe className="w-3.5 h-3.5" />
             IP Checker
+          </button>
+
+          <button
+            onClick={() => setShowDnsModal(true)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-brand-border bg-brand-panel hover:bg-brand-card hover:text-white transition-all text-xs font-medium cursor-pointer"
+          >
+            <Key className="w-3.5 h-3.5" />
+            DNS Generator
           </button>
 
           <button
@@ -3575,137 +3584,11 @@ http-access           0.0.0.0/0 monitor
       )}
 
       {/* ---------------------------------------------------------
-          DNS RECORDS GENERATOR POP-UP MODAL (Step 2 Helper)
+          DNS RECORDS GENERATOR — Powered by real RSA-2048 DKIM keys
          --------------------------------------------------------- */}
       {showDnsModal && (
-        <div className="fixed inset-0 z-[60] bg-brand-bg/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-brand-panel border border-brand-border rounded-2xl w-full max-w-3xl shadow-2xl p-5 space-y-4">
-            <div className="flex justify-between items-center border-b border-brand-border/60 pb-3">
-              <div className="flex items-center gap-2">
-                <Globe className="w-5 h-5 text-brand-cyan" />
-                <h3 className="text-white font-bold text-md leading-none">Auto-Generated DNS Records (DKIM / SPF / DMARC)</h3>
-              </div>
-              <button
-                onClick={() => setShowDnsModal(false)}
-                className="text-brand-text hover:text-white bg-brand-card p-1.5 rounded-lg border-none cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs text-brand-text leading-relaxed">
-              Copy and paste these TXT/MX records into your DNS Registrar (GoDaddy, Cloudflare, etc.) to pass anti-spam checks.
-            </p>
-
-            {/* Credentials Summary */}
-            {installSuccess && (
-              <div className="bg-brand-green/10 p-3 rounded-lg border border-brand-green/30 space-y-1.5">
-                <div className="font-bold text-brand-green text-xs tracking-wider">INSTALLATION COMPLETE — CONNECTION DETAILS</div>
-                <div className="space-y-0.5 text-[11px] font-mono text-brand-text-bright">
-                  <div><span className="text-brand-cyan">SMTP Host:</span> {sshHost || pmtaHostname}</div>
-                  <div><span className="text-brand-cyan">SMTP Port:</span> {pmtaSmtpPort}</div>
-                  <div><span className="text-brand-cyan">SMTP Username:</span> {pmtaSmtpUser}</div>
-                  <div><span className="text-brand-cyan">SMTP Password:</span> {pmtaSmtpPass}</div>
-                  <div><span className="text-brand-cyan">Monitor URL:</span> http://{pmtaPrimaryIp}:{pmtaMonitorPort}/</div>
-                  <div><span className="text-brand-cyan">Sending Domain:</span> {sendingDomain}</div>
-                  <div><span className="text-brand-cyan">Hostname:</span> {pmtaHostname}</div>
-                  <div><span className="text-brand-cyan">DKIM Selector:</span> {dkimSelector}._domainkey.{sendingDomain}</div>
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-3 font-mono text-[10px]">
-
-              {/* SPF Record */}
-              <div className="bg-brand-bg/75 p-3 rounded-lg border border-brand-border/60 space-y-1">
-                <div className="flex justify-between font-bold text-brand-cyan">
-                  <span>SPF (TXT Record)</span>
-                  <span>Host: @</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                    {spfValue}
-                  </pre>
-                  <button
-                    onClick={() => copyToClipboard(spfValue, 'spf')}
-                    className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
-                    title="Copy SPF record"
-                  >
-                    {copiedRecord === 'spf' ? <Check className="w-3.5 h-3.5 text-brand-green" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* DKIM Record */}
-              <div className="bg-brand-bg/75 p-3 rounded-lg border border-brand-border/60 space-y-1">
-                <div className="flex justify-between font-bold text-brand-cyan">
-                  <span>DKIM (TXT Record)</span>
-                  <span>Host: {dkimSelector}._domainkey</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                    {dkimValue}
-                  </pre>
-                  <button
-                    onClick={() => copyToClipboard(dkimValue, 'dkim')}
-                    className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
-                    title="Copy DKIM record"
-                  >
-                    {copiedRecord === 'dkim' ? <Check className="w-3.5 h-3.5 text-brand-green" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* DMARC Record */}
-              <div className="bg-brand-bg/75 p-3 rounded-lg border border-brand-border/60 space-y-1">
-                <div className="flex justify-between font-bold text-brand-cyan">
-                  <span>DMARC (TXT Record)</span>
-                  <span>Host: _dmarc</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                    {dmarcValue}
-                  </pre>
-                  <button
-                    onClick={() => copyToClipboard(dmarcValue, 'dmarc')}
-                    className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
-                    title="Copy DMARC record"
-                  >
-                    {copiedRecord === 'dmarc' ? <Check className="w-3.5 h-3.5 text-brand-green" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* MX Record */}
-              <div className="bg-brand-bg/75 p-3 rounded-lg border border-brand-border/60 space-y-1">
-                <div className="flex justify-between font-bold text-brand-cyan">
-                  <span>MX Record</span>
-                  <span>Host: @ (Priority: 10)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <pre className="flex-1 text-brand-text-bright bg-brand-panel p-2 rounded border border-brand-border/40 select-all whitespace-pre-wrap">
-                    {pmtaHostname}
-                  </pre>
-                  <button
-                    onClick={() => copyToClipboard(pmtaHostname, 'mx')}
-                    className="p-1.5 bg-brand-card hover:bg-brand-cyan hover:text-brand-panel rounded-lg border border-brand-border transition-all shrink-0"
-                    title="Copy MX record"
-                  >
-                    {copiedRecord === 'mx' ? <Check className="w-3.5 h-3.5 text-brand-green" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="text-right pt-2 border-t border-brand-border/60">
-              <button
-                onClick={() => setShowDnsModal(false)}
-                className="px-4 py-2 bg-brand-cyan text-brand-panel hover:bg-brand-cyan/95 text-xs font-bold rounded-lg cursor-pointer glow-cyan"
-              >
-                Done
-              </button>
-            </div>
-          </div>
+        <div className="fixed inset-0 z-[60] bg-brand-bg/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <DnsGenerator onClose={() => setShowDnsModal(false)} />
         </div>
       )}
 
