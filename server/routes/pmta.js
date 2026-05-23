@@ -631,9 +631,15 @@ send('Installing system dependencies...');
       send('PowerMTA services started');
 
       send('Configuring firewall...');
-      await sshExecSafe('apt-get install -y ufw 2>/dev/null || dnf install -y ufw 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('apt-get install -y ufw firewalld 2>/dev/null || dnf install -y ufw firewalld 2>/dev/null || true').catch(() => {});
       const fwCmd = `
-if command -v ufw >/dev/null 2>&1; then
+if command -v firewall-cmd >/dev/null 2>&1; then
+  firewall-cmd --add-port=${smtpPort}/tcp --permanent >/dev/null 2>&1 || true
+  firewall-cmd --add-port=${monitorPort}/tcp --permanent >/dev/null 2>&1 || true
+  firewall-cmd --add-port=8080/tcp --permanent >/dev/null 2>&1 || true
+  firewall-cmd --reload >/dev/null 2>&1 || true
+  echo firewalld
+elif command -v ufw >/dev/null 2>&1; then
   ufw allow ${smtpPort}/tcp >/dev/null 2>&1 || true
   ufw allow ${monitorPort}/tcp >/dev/null 2>&1 || true
   ufw allow 8080/tcp >/dev/null 2>&1 || true
