@@ -328,7 +328,60 @@ curl -s -X POST http://your-domain.com/auth/login \
 # Response should include: {"user":{...},"accessToken":"..."}
 ```
 
-### 15. Access the dashboard
+### 15. Upload PowerMTA5.zip to server
+
+The `PowerMTA5.zip` file is **not in Git** (`.gitignore`). Copy it from your local machine to the VPS:
+
+```bash
+# From your LOCAL machine (not the VPS)
+scp /path/to/local/PowerMTA5.zip root@your-server-ip:/var/www/powermm/
+
+# Verify on the VPS
+ssh root@your-server-ip "ls -la /var/www/powermm/PowerMTA5.zip"
+```
+
+Also upload the extracted directory (fallback):
+
+```bash
+# From your LOCAL machine
+scp -r /path/to/local/PowerMTA5.0r8_ALMALINUX root@your-server-ip:/var/www/powermm/
+```
+
+### 16. API authentication (required before PMTA operations)
+
+The PMTA installer requires a valid JWT token. If you get **"Authentication required"** when testing SSH, you need to log in first:
+
+```bash
+# Log in and get a token
+curl -s -X POST http://your-domain.com/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@moonmailer.pro","password":"admin123"}'
+```
+
+Save the token from the response (`accessToken`) and use it for subsequent API calls:
+
+```bash
+# Store token
+TOKEN="<paste-access-token-here>"
+
+# Test SSH connection to a target VPS via API
+curl -s -X POST http://your-domain.com/pmta/test-ssh \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "host": "target-vps-ip",
+    "port": 22,
+    "username": "root",
+    "password": "target-vps-root-password"
+  }'
+
+# Expected success response:
+# {"success":true,"message":"Connected as root to target-vps-ip:22","details":"hostname\nkernel-version"}
+```
+
+If testing via the web UI, simply log in at `http://your-domain.com` first — the browser stores the token automatically.
+
+### 17. Access the dashboard
 
 Open `http://your-domain.com` in your browser and log in with:
 - **Email:** `admin@moonmailer.pro`
@@ -460,6 +513,17 @@ ssh-keygen -t rsa -b 4096
 ssh-copy-id root@your-master-server
 ```
 
+### Transfer PowerMTA files to fresh VPS
+
+```bash
+# From LOCAL machine (first deploy)
+scp /path/to/PowerMTA5.zip root@your-server:/var/www/powermm/
+scp -r /path/to/PowerMTA5.0r8_ALMALINUX root@your-server:/var/www/powermm/
+
+# Then deploy normally
+ssh root@your-server "cd /var/www/powermm && git pull && npm run build && pm2 restart powermm"
+```
+
 ### Manual deploy
 
 ```bash
@@ -524,6 +588,8 @@ redis-cli ping  # Should return PONG
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
 | SSH timeout | Wrong IP/port or firewall | Verify `ssh root@target-ip` works manually |
+| Authentication required | No valid JWT token | Log in via UI first, or get token: `curl -s -X POST .../auth/login -d '{"email":"admin@moonmailer.pro","password":"admin123"}'` |
+| Zip upload hangs | PowerMTA5.zip missing on master | Upload it: `scp PowerMTA5.zip root@server:/var/www/powermm/` |
 | Zip upload hangs | Slow connection / large file | Wait up to 3 minutes; cancel and retry |
 | `pmtad` fails to start | Missing `log-file` in config | Rerun installer — template now includes it |
 | `pmtahttpd` fails to start | Missing `log-file` or bad directive | Check `/etc/pmta/config` on target VPS |
