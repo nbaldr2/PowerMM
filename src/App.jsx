@@ -775,24 +775,6 @@ const runSpamassassin = async () => {
     }
   }
 
-  const runCloudmark = () => {
-    setTestingCloudmark(true)
-    setCloudmarkScore(null)
-    setTimeout(() => {
-      setTestingCloudmark(false)
-      setCloudmarkScore({
-        rating: 'CLEAN REPUTATION (0% spam ratio)',
-        status: 'ACCEPTED',
-        details: [
-          { node: 'OX Cloudmark Reputation Gateway', result: 'Green status / High IP trust level' },
-          { node: 'Fingerprint mutation resistance', result: '99.4% (Stealth structure actively rotating)' },
-          { node: 'Spamhaus Blocklist Check', result: 'Not listed (SBL/XBL/PBL secure)' },
-          { node: 'Barracuda Reputation Network', result: 'Score 0.0 (Neutral/Safe)' }
-        ]
-      })
-    }, 1800)
-  }
-
   // ---------------------------------------------------------
   // POWERMTA WIZARD STATE
   // ---------------------------------------------------------
