@@ -554,41 +554,8 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
         send(`pmtahttpd: ${httpdSha.split(' ')[0]}`);
       }
 
-      send('Installing system dependencies...');
-if (isDebian && hasDeb) {
-        await sshExecSafe('cd /root/pmta_files && dpkg -i *.deb 2>&1 || (apt-get install -f -y && dpkg -i *.deb 2>&1) || true', 180000);
-        send('Debian package installed');
-      } else if (hasRpm) {
-        await sshExecSafe('cd /root/pmta_files && rpm -ivh *.rpm 2>&1 || true', 180000);
-        send('RPM package installed');
-      } else if (isDebian) {
-        send('⚠️ No .deb found on Ubuntu. Attempting RPM anyway...');
-        await sshExecSafe('cd /root/pmta_files && rpm -ivh *.rpm 2>&1 || true', 180000);
-      } else {
-        send('⚠️ No .rpm found. Attempting dpkg as fallback...');
-        await sshExecSafe('cd /root/pmta_files && dpkg -i *.deb 2>&1 || true', 180000);
-      }
-      send('Dependencies installed');
-
-      send('Stopping existing PowerMTA services...');
-      await sshExecSafe('pkill -f pmtad 2>/dev/null || true').catch(() => {});
-      await sshExecSafe('pkill -f pmtahttpd 2>/dev/null || true').catch(() => {});
-      await sshExecSafe('systemctl stop pmta 2>/dev/null || service pmta stop 2>/dev/null || true').catch(() => {});
-      send('Services stopped');
-
-      send('Creating directories...');
-      await sshExecSafe('mkdir -p /etc/pmta /var/spool/pmta /var/log/pmta').catch(() => {});
-      send('Directories created');
-
-      send('Listing /root/pmta_files/ contents...');
-      const { stdout: fileList } = await sshExecSafe('ls -la /root/pmta_files/', 10000);
-      send(fileList.substring(0, 400));
-
-      const hasDeb = fileList.includes('.deb');
-      const hasRpm = fileList.includes('.rpm');
-
-      send('Installing PowerMTA package(s)...');
-      if (isDebian && hasDeb) {
+send('Installing system dependencies...');
+      if (isDebian) {
         const { stdout: debFiles } = await sshExecSafe('ls /root/pmta_files/*.deb 2>/dev/null || echo NO_DEB', 10000);
         if (debFiles.includes('NO_DEB')) {
           send('No .deb found, falling back to RPM.');
