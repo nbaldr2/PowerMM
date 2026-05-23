@@ -631,6 +631,7 @@ send('Installing system dependencies...');
       send('PowerMTA services started');
 
       send('Configuring firewall...');
+      await sshExecSafe('apt-get install -y ufw 2>/dev/null || dnf install -y ufw 2>/dev/null || true').catch(() => {});
       const fwCmd = `
 if command -v ufw >/dev/null 2>&1; then
   ufw allow ${smtpPort}/tcp >/dev/null 2>&1 || true
