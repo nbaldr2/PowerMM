@@ -623,15 +623,29 @@ send('Installing system dependencies...');
       await sshExecSafe('chmod 600 /etc/pmta/config /etc/pmta/license 2>/dev/null || chmod 600 /etc/pmta/config').catch(() => {});
       send('Configuration written to /etc/pmta/config');
 
-      send('Starting PowerMTA daemon...');
-      await sshExecSafe('test -f /usr/sbin/pmtad && /usr/sbin/pmtad 2>&1 & || echo "pmtad not found at /usr/sbin/pmtad"', 15000).catch(() => {});
-      await sshExecSafe('test -f /usr/sbin/pmtahttpd && nohup /usr/sbin/pmtahttpd >/dev/null 2>&1 & || echo "pmtahttpd not found"', 10000).catch(() => {});
+      send('Enabling PowerMTA system services...');
+      await sshExecSafe('systemctl enable pmta 2>/dev/null || update-rc.d pmta defaults 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('systemctl enable pmtahttpd 2>/dev/null || update-rc.d pmtahttpd defaults 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('systemctl start pmta 2>/dev/null || service pmta start 2>/dev/null || (/usr/sbin/pmtad 2>&1 &) || true', 15000).catch(() => {});
+      await sshExecSafe('systemctl start pmtahttpd 2>/dev/null || service pmtahttp start 2>/dev/null || nohup /usr/sbin/pmtahttpd >/dev/null 2>&1 & || true', 10000).catch(() => {});
       send('PowerMTA services started');
 
       send('Configuring firewall...');
-      const fwCmd = `iptables -A INPUT -p tcp --dport ${monitorPort} -j ACCEPT`;
-      await sshExecSafe(fwCmd, 10000).catch(() => {});
-      send(`Firewall rule added for port ${monitorPort}`);
+      const fwCmd = `
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow ${smtpPort}/tcp >/dev/null 2>&1 || true
+  ufw allow ${monitorPort}/tcp >/dev/null 2>&1 || true
+  ufw allow 8080/tcp >/dev/null 2>&1 || true
+  ufw reload >/dev/null 2>&1 || true
+  echo ufw
+else
+  iptables -A INPUT -p tcp --dport ${smtpPort} -j ACCEPT 2>/dev/null || true
+  iptables -A INPUT -p tcp --dport ${monitorPort} -j ACCEPT 2>/dev/null || true
+  iptables -A INPUT -p tcp --dport 8080 -j ACCEPT 2>/dev/null || true
+  echo iptables
+fi`.trim().replace(/\n/g, '; ');
+      const { stdout: fwType } = await sshExecSafe(fwCmd, 30000);
+      send(`Firewall updated (${(fwType || '').trim() || 'ok'})`);
 
       send('Verifying service status...');
       const { stdout: pidCheck } = await sshExecSafe('pgrep -f pmtad || echo "not running"', 10000);
