@@ -52,7 +52,7 @@ const badgeColors = {
   MX: '#3b82f6',
 };
 
-export default function DnsGenerator({ onClose }) {
+export default function DnsGenerator({ onClose, onSync, onFormChange, embedding }) {
   const [form, setForm] = useState({
     sendingDomain: '',
     hostname: '',
@@ -66,7 +66,14 @@ export default function DnsGenerator({ onClose }) {
   const [tab, setTab] = useState('dns');
   const [copied, setCopied] = useState(null);
 
-  const update = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+  const update = (key) => (e) => {
+    const v = e.target.value;
+    setForm(f => {
+      const next = { ...f, [key]: v };
+      if (onFormChange) onFormChange(next);
+      return next;
+    });
+  };
 
   const copyToClipboard = (text, label) => {
     const ta = document.createElement('textarea');
@@ -153,6 +160,7 @@ export default function DnsGenerator({ onClose }) {
         },
       });
       setResult(data);
+      if (onSync) onSync(data);
     } catch (err) {
       alert('Generation failed: ' + err.message);
     } finally {

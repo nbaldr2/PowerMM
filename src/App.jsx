@@ -3004,75 +3004,25 @@ ${getCompiledHtml()}`}
               {wizardStep === 2 && (
                 <div className="space-y-6">
 
-                  {/* Domain & IP config */}
+                  {/* Domain & IP config — replaced by DNS Generator */}
                   <div className="space-y-4">
                     <h3 className="text-sm font-bold text-white border-b border-brand-border/60 pb-1">Domain & IP Configuration</h3>
                     <p className="text-xs text-brand-text leading-relaxed">
                       Enter the domain and IP address(es) PowerMTA will use for sending. DKIM keys, DNS records, and virtual MTAs are auto-generated.
                     </p>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-brand-text-bright">Sending Domain *</label>
-                        <input
-                          type="text"
-                          value={sendingDomain}
-                          onChange={(e) => setSendingDomain(e.target.value)}
-                          className="w-full bg-brand-bg/85 border border-brand-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-brand-text-bright">Hostname</label>
-                        <input
-                          type="text"
-                          value={pmtaHostname}
-                          onChange={(e) => setPmtaHostname(e.target.value)}
-                          className="w-full bg-brand-bg/85 border border-brand-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-brand-text-bright">Primary IP Address *</label>
-                        <input
-                          type="text"
-                          value={pmtaPrimaryIp}
-                          onChange={(e) => setPmtaPrimaryIp(e.target.value)}
-                          className="w-full bg-brand-bg/85 border border-brand-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-brand-text-bright">DKIM Selector</label>
-                        <input
-                          type="text"
-                          value={dkimSelector}
-                          onChange={(e) => setDkimSelector(e.target.value)}
-                          className="w-full bg-brand-bg/85 border border-brand-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-brand-text-bright">Secondary IPs (one per line, optional)</label>
-                      <textarea
-                        value={pmtaSecondaryIps}
-                        onChange={(e) => setPmtaSecondaryIps(e.target.value)}
-                        className="w-full h-16 bg-brand-bg border border-brand-border rounded-lg p-2.5 text-xs font-mono text-white focus:outline-none"
-                        placeholder="203.0.113.51&#10;203.0.113.52"
-                      />
-                      <span className="text-[10px] text-brand-cyan/80 block">
-                        Leave empty for single-IP mode. Adding IPs creates automatic VMTA rotation pools.
-                      </span>
-                    </div>
-
-                    <button
-                      onClick={() => setShowDnsModal(true)}
-                      className="px-4 py-2 bg-brand-card hover:bg-brand-card/90 border border-brand-cyan/20 text-brand-cyan text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Globe className="w-3.5 h-3.5" />
-                      Generate DNS Records
-                    </button>
+                    <DnsGenerator
+                      embedding={true}
+                      onFormChange={(vals) => {
+                        if (vals.sendingDomain) setSendingDomain(vals.sendingDomain)
+                        if (vals.hostname) setPmtaHostname(vals.hostname)
+                        if (vals.primaryIP) setPmtaPrimaryIp(vals.primaryIP)
+                        if (vals.dkimSelector) setDkimSelector(vals.dkimSelector)
+                        if (vals.secondaryIPs !== undefined) setPmtaSecondaryIps(vals.secondaryIPs)
+                      }}
+                      onSync={(data) => {
+                        setDkimPublicKey(data.dkim?.publicKeyBase64 || '')
+                      }}
+                    />
                   </div>
 
                   {/* SMTP & Monitor settings */}
