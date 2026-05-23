@@ -566,8 +566,8 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     send('License installed');
 
     send('Generating DKIM keypair...');
-    const dkimPath = `/etc/pmta/keys/${config.domain}.pem`;
-    await sshExecSafe(`mkdir -p /etc/pmta/keys`);
+    const dkimPath = `/etc/pmta/dkim.pem`;
+    await sshExecSafe(`mkdir -p /etc/pmta`);
     await sshExecSafe(`openssl genrsa -out ${dkimPath} 2048 2>&1`);
     await sshExecSafe(`chmod 600 ${dkimPath}`);
     const { stdout: pubKey } = await sshExecSafe(`openssl rsa -in ${dkimPath} -pubout 2>/dev/null | grep -v "---" | tr -d '\\n'`);
