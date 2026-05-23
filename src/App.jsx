@@ -88,6 +88,9 @@ function App() {
     api.getHealth().then(data => {
       if (data.status === 'healthy') setMailOk(true)
     }).catch(() => setMailOk(false))
+    api.getSmtpServers().then(d => {
+      if (d.servers) setSmtpPool(d.servers)
+    }).catch(() => {})
     return () => socketClient.disconnect()
   }, [])
 
@@ -102,11 +105,26 @@ function App() {
         if (payload.success) {
           setInstallSuccess(true)
           setMailOk(true)
-          setTimeout(() => {
-            api.getPmtaConfig().then(d => {
-              const pub = d?.config?.dkim_public_key
-              if (pub) setDkimPublicKey(pub)
-            }).catch(() => {})
+          setTimeout(async () => {
+            try {
+              const d = await api.getPmtaConfig()
+              const cfg = d?.config
+              if (cfg?.dkim_public_key) setDkimPublicKey(cfg.dkim_public_key)
+              if (cfg?.ssh_host) {
+                await api.addSmtpServer({
+                  host: cfg.ssh_host,
+                  port: Number(cfg.smtp_port) || 2525,
+                  username: cfg.smtp_user || 'pmta-relay-user',
+                  password: '[auto-configured-from-pmta]',
+                  encryption: 'NONE',
+                  name: `PMTA ${cfg.domain || cfg.ssh_host}`,
+                  pool_name: 'default',
+                  daily_limit: 100000,
+                }).catch(() => {})
+                const servers = await api.getSmtpServers().catch(() => ({ servers: [] }))
+                if (servers.servers) setSmtpPool(servers.servers)
+              }
+            } catch {}
           }, 2000)
         } else {
           setInstallSuccess(false)
@@ -555,36 +573,54 @@ ${DEFAULT_HTML_BODY}`
   const [testingSmtp, setTestingSmtp] = useState(false)
   const [smtpStatusMessage, setSmtpStatusMessage] = useState(null)
 
-  const handleTestSmtp = () => {
+  const handleTestSmtp = async () => {
     setTestingSmtp(true)
     setSmtpStatusMessage(null)
-    setTimeout(() => {
-      setTestingSmtp(false)
-      setSmtpStatusMessage({
-        type: 'success',
-        text: `Successfully authenticated with ${smtpHost}:${smtpPort}. Latency: 42ms. STARTTLS accepted.`
+    try {
+      const res = await api.testSmtpInline({
+        host: smtpHost, port: smtpPort,
+        username: smtpUser, password: smtpPass,
+        encryption: smtpEncryption,
       })
-    }, 1500)
-  }
-
-  const handleAddToPool = () => {
-    const newPoolItem = {
-      host: smtpHost,
-      port: smtpPort,
-      user: smtpUser || 'anonymous',
-      enabled: true
+      setSmtpStatusMessage({ type: 'success', text: `Connected to ${smtpHost}:${smtpPort} — ${res.message || 'OK'}` })
+    } catch (err) {
+      setSmtpStatusMessage({ type: 'error', text: `Connection failed: ${err.message}` })
+    } finally {
+      setTestingSmtp(false)
     }
-    setSmtpPool([...smtpPool, newPoolItem])
-    alert(`Added ${smtpHost}:${smtpPort} to the PowerMTA Server Pool!`)
   }
 
-  const fillFromPmta = () => {
-    setSmtpHost('127.0.0.1')
-    setSmtpPort(2525)
-    setSmtpEncryption('None')
-    setSmtpUser('pmta-relay-user')
-    setSmtpPass('•••••••••••••')
-    alert("SMTP configuration loaded automatically from current local PowerMTA settings!")
+  const handleAddToPool = async () => {
+    try {
+      await api.addSmtpServer({
+        host: smtpHost, port: parseInt(smtpPort),
+        username: smtpUser, password: smtpPass,
+        encryption: smtpEncryption.toUpperCase(),
+        name: `${smtpHost}:${smtpPort}`,
+        pool_name: 'default',
+      })
+      const servers = await api.getSmtpServers()
+      setSmtpPool(servers.servers || [])
+      alert(`Added ${smtpHost}:${smtpPort} to SMTP pool!`)
+    } catch (err) {
+      alert(`Failed to add: ${err.message}`)
+    }
+  }
+
+  const fillFromPmta = async () => {
+    try {
+      const data = await api.fillFromPmta()
+      if (data.host) {
+        setSmtpHost(data.host)
+        setSmtpPort(data.port)
+        setSmtpEncryption(data.encryption || 'None')
+        setSmtpUser(data.username)
+        setSmtpPass(data.password ? '•••••••••••••' : '')
+      }
+      alert(data.message || 'SMTP configuration loaded from PowerMTA!')
+    } catch (err) {
+      alert(`Could not load PMTA config: ${err.message}`)
+    }
   }
 
   // ---------------------------------------------------------
@@ -677,7 +713,15 @@ ${DEFAULT_HTML_BODY}`
         text_body: 'Please view this email in an HTML compatible client.',
         headers: headersOpen ? headersText : '',
         inbox_shield: shieldState,
-        randomizer: randomizerState
+        randomizer: randomizerState,
+        pool_name: pmtaPoolName,
+        batch_settings: {
+          batchSize: parseInt(batchSize),
+          speedMode: speedMode,
+          batchDelay: parseInt(batchDelay),
+          emailDelay: parseInt(emailDelay),
+        },
+        creative_engine: creativeState,
       })
 
       // Join the socket room to get live updates
@@ -701,25 +745,34 @@ ${DEFAULT_HTML_BODY}`
   const [spamScore, setSpamScore] = useState(null)
   const [cloudmarkScore, setCloudmarkScore] = useState(null)
 
-  const runSpamassassin = () => {
+const runSpamassassin = async () => {
     setTestingSpam(true)
     setSpamScore(null)
-    setTimeout(() => {
+    try {
+      const data = await api.checkSpamAssassin({ html: htmlBody, subject, from: fromEmail })
+      setSpamScore(data.score || 0)
+      setSendLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] SpamAssassin score: ${data.score || 0}`])
+    } catch (err) {
+      setSpamScore(null)
+      setSendLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] SpamAssassin error: ${err.message}`])
+    } finally {
       setTestingSpam(false)
-      setSpamScore({
-        score: '9.8 / 10.0',
-        rating: 'EXCELLENT',
-        details: [
-          { check: 'DKIM Signature Alignment', status: 'pass', desc: 'Valid 2048-bit signature found' },
-          { check: 'SPF Alignment', status: 'pass', desc: 'Server IP authorized' },
-          { check: 'DMARC Alignment', status: 'pass', desc: 'Header domain matches SPF/DKIM' },
-          { check: 'Reverse DNS (rDNS)', status: 'pass', desc: '217.154.81.50 points to mail.mycompany.co.uk' },
-          { check: 'Bayesian Filter Probability', status: 'pass', desc: '0.003% probability (ham classification)' },
-          { check: 'Homoglyph Obfuscation detection', status: 'warning', desc: 'Zero harmful characters flagged' },
-          { check: 'List-Unsubscribe implementation', status: 'pass', desc: 'RFC 8058 valid header present' }
-        ]
-      })
-    }, 2000)
+    }
+  }
+
+  const runCloudmark = async () => {
+    setTestingCloudmark(true)
+    setCloudmarkScore(null)
+    try {
+      const data = await api.checkCloudmark({ html: htmlBody, subject, from: fromEmail })
+      setCloudmarkScore(data.reputation || 'unknown')
+      setSendLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Cloudmark: ${data.reputation || 'unknown'}`])
+    } catch (err) {
+      setCloudmarkScore(null)
+      setSendLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] Cloudmark error: ${err.message}`])
+    } finally {
+      setTestingCloudmark(false)
+    }
   }
 
   const runCloudmark = () => {

@@ -1,3 +1,5 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { Worker } from 'bullmq';
 import Redis from 'ioredis';
 import pg from 'pg';
@@ -5,10 +7,17 @@ import dotenv from 'dotenv';
 import { buildAndSendEmail, pickSmtpFromPool, closeAllTransporters } from '../services/email.js';
 import logger from '../utils/logger.js';
 
-dotenv.config({ path: '../.env' });
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '..', '..', '.env') });
 
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', { maxRetriesPerRequest: null });
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://powermm:powermm_secret@localhost:5432/powermm' });
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://powermm:powermm_secret@localhost:5432/powermm';
+
+logger.info(`SendWorker using Redis: ${REDIS_URL}`);
+logger.info(`SendWorker using DB: ${DATABASE_URL.replace(/\/\/[^:]+:[^@]+@/, '//user:****@')}`);
+
+const redis = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
+const pool = new pg.Pool({ connectionString: DATABASE_URL });
 const q = (text, params) => pool.query(text, params);
 
 // Speed mode configs
