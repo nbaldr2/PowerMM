@@ -505,9 +505,40 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
       send('Checking /root/pmta_files/ on target system...');
       const { stdout: dirCheck } = await sshExecSafe('ls -la /root/pmta_files/ 2>&1 || echo DIRECTORY_NOT_FOUND', 10000);
       if (dirCheck.includes('DIRECTORY_NOT_FOUND') || dirCheck.includes('No such file')) {
-        throw new Error('/root/pmta_files/ does not exist on target system. Upload files first.');
+        send('/root/pmta_files/ not found. Uploading from master server...');
+        await sshExecSafe('mkdir -p /root/pmta_files').catch(() => {});
+        const pmtaExtractedDir = path.join(projectRoot, 'PowerMTA5.0r8_ALMALINUX');
+        let uploaded = false;
+        try {
+          await fs.access(pmtaExtractedDir);
+          const entries = await fs.readdir(pmtaExtractedDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.name.startsWith('.')) continue;
+            const localPath = path.join(pmtaExtractedDir, entry.name);
+            const remotePath = `/root/pmta_files/${entry.name}`;
+            if (entry.isFile()) {
+              send(`Uploading ${entry.name}...`);
+              await uploadFileViaSftp(conn, localPath, remotePath);
+            } else if (entry.isDirectory()) {
+              await uploadDirectoryViaSftp(conn, localPath, remotePath, send);
+            }
+          }
+          uploaded = true;
+        } catch {
+          try {
+            await fs.access(path.join(projectRoot, 'PowerMTA5.zip'));
+            send('Extracted directory not found, uploading zip and extracting...');
+            await sshExecSafe('rm -f /root/PowerMTA5.zip').catch(() => {});
+            await uploadFileViaSftp(conn, path.join(projectRoot, 'PowerMTA5.zip'), '/root/PowerMTA5.zip');
+            await sshExecSafe('mkdir -p /root/pmta_files && cd /root/pmta_files && unzip -o /root/PowerMTA5.zip 2>/dev/null || (command -v bsdtar >/dev/null 2>&1 && bsdtar -xf /root/PowerMTA5.zip -C /root/pmta_files)', 180000);
+            uploaded = true;
+          } catch {}
+        }
+        if (!uploaded) throw new Error('No PowerMTA files found on master server to upload.');
+        send('Files uploaded to /root/pmta_files/');
+      } else {
+        send('Files found on target');
       }
-      send('Files found');
 
       send('Verifying binary checksums...');
       const { stdout: pmtadSha } = await sshExecSafe('sha256sum /root/pmta_files/pmtad 2>/dev/null || echo NO_BINARY', 10000);
