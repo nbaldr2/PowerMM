@@ -477,210 +477,165 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
     await connectSsh();
     send(`Connected to ${config.ssh_host}`);
 
-    send('Detecting operating system...');
-    const { stdout: osInfo } = await sshExecSafe('cat /etc/os-release | head -10 && uname -m');
-    send(`OS: ${osInfo.trim().split('\n')[0]}`);
-
-    const isAlmaOrRhel = /almalinux|rocky|centos|rhel|red hat/i.test(osInfo);
-    if (!isAlmaOrRhel) {
-      send('⚠️ Warning: PowerMTA RPM is designed for AlmaLinux/RHEL/CentOS. Proceeding anyway...');
-    }
-
-    send('Installing system dependencies...');
-    await sshExecSafe('yum install -y openssl curl wget unzip 2>/dev/null || dnf install -y openssl curl wget unzip', 120000);
-    send('Dependencies installed');
-
-    send('Creating PowerMTA directories...');
-    await sshExecSafe('rm -rf /root/PMTA && mkdir -p /root/PMTA /etc/pmta/keys /var/spool/pmta /var/log/pmta');
-    send('Directories created');
-
-    const remoteZipPath = '/root/PowerMTA5.zip';
-    const { available: localZipAvailable, path: localZipPath } = await ensureLocalPowerMtaZip(send);
-    const pmtaExtractedDir = path.join(projectRoot, 'PowerMTA5.0r8_ALMALINUX');
-
-    if (localZipAvailable) {
-      send('Uploading PowerMTA5.zip to target VPS...');
-      await sshExecSafe(`rm -f ${remoteZipPath}`).catch(() => {});
-      await uploadFileViaSftp(conn, localZipPath, remoteZipPath);
-      send('Upload complete');
-
-      send('Extracting PowerMTA5.zip...');
-      await sshExecSafe(`cd /root/PMTA && (unzip -o ${remoteZipPath} >/dev/null 2>&1 || (command -v bsdtar >/dev/null 2>&1 && bsdtar -xf ${remoteZipPath} -C /root/PMTA))`, 180000);
-      send('Installing PowerMTA RPM package(s)...');
-      await sshExecSafe(`cd /root/PMTA && find . -maxdepth 3 -type f -name 'PowerMTA-5.0r8*.rpm' -exec rpm -ivh {} \\; 2>&1 || true`, 180000);
-      send('PowerMTA package installed from zip');
-    } else {
-      const uploadExtracted = async () => {
-        const dirFiles = await fs.readdir(pmtaExtractedDir, { withFileTypes: true });
-        for (const entry of dirFiles) {
-          if (entry.name.startsWith('.')) continue;
-          const localPath = path.join(pmtaExtractedDir, entry.name);
-          const remotePath = `/root/PMTA/${entry.name}`;
-          if (entry.isFile()) {
-            send(`Uploading ${entry.name}...`);
-            await uploadFileViaSftp(conn, localPath, remotePath);
-          } else if (entry.isDirectory()) {
-            send(`Uploading directory ${entry.name}/...`);
-            await uploadDirectoryViaSftp(conn, localPath, `/root/PMTA/${entry.name}`, send);
-          }
-        }
-      };
-
-      let extractedUploaded = false;
-      try {
-        await fs.access(pmtaExtractedDir);
-        send('Uploading PowerMTA files individually from extracted directory...');
-        await uploadExtracted();
-        send('Files uploaded');
-        extractedUploaded = true;
-      } catch {
-        send('Extracted directory not found on master server.');
-      }
-
-      if (extractedUploaded) {
-        send('Installing PowerMTA RPM package(s)...');
-        await sshExecSafe(`cd /root/PMTA && find . -maxdepth 3 -type f -name 'PowerMTA-5.0r8*.rpm' -exec rpm -ivh {} \\; 2>&1 || true`, 180000);
-        send('PowerMTA package installed');
-      } else {
-        send('No PowerMTA files available. Installation cannot proceed.');
-        throw new Error('No PowerMTA installation files found on master server');
-      }
-    }
-
-    send('Stopping existing PowerMTA services...');
-    await sshExecSafe('service pmta stop 2>/dev/null || true');
-    await sshExecSafe('service pmtahttp stop 2>/dev/null || true');
-    await sshExecSafe('pkill -f pmtad 2>/dev/null || true');
-    await sshExecSafe('pkill -f pmtahttpd 2>/dev/null || true');
-
-    send('Patching PowerMTA binaries...');
-    await sshExecSafe('rm -f /usr/sbin/pmtad /usr/sbin/pmtahttpd');
-    await sshExecSafe("find /root/PMTA -type f \\( -name pmtad -o -name pmtahttpd \\) -exec cp -f {} /usr/sbin/ \\; 2>/dev/null || true");
-    await sshExecSafe('chmod 755 /usr/sbin/pmta 2>/dev/null || true');
-    await sshExecSafe('chmod 755 /usr/sbin/pmtad 2>/dev/null || true');
-    await sshExecSafe('chmod 755 /usr/sbin/pmtahttpd 2>/dev/null || true');
-    send('Binaries patched');
-
-    send('Installing license file from package...');
-    await sshExecSafe("find /root/PMTA -type f -name 'license' -exec cp -f {} /etc/pmta/license \\; 2>/dev/null || true");
-    send('License installed');
-
-    send('Generating DKIM keypair...');
-    const dkimPath = `/etc/pmta/dkim.pem`;
-    await sshExecSafe(`mkdir -p /etc/pmta`);
-    await sshExecSafe(`openssl genrsa -out ${dkimPath} 2048 2>&1`);
-    await sshExecSafe(`chmod 600 ${dkimPath}`);
-    const { stdout: pubKey } = await sshExecSafe(`openssl rsa -in ${dkimPath} -pubout 2>/dev/null | grep -v "---" | tr -d '\\n'`);
-    send(`DKIM key generated`);
-
-    send('Writing PowerMTA configuration...');
-    let configText = config.config_text || '';
-    configText = configText.replace(/\{\{\s*domain\s*\}\}/g, config.domain);
-    configText = configText.replace(/\{\{\s*hostname\s*\}\}/g, config.hostname || config.domain);
-    configText = configText.replace(/\{\{\s*primary_ip\s*\}\}/g, config.primary_ip);
-    configText = configText.replace(/\{\{\s*PRIMARY_IP\s*\}\}/g, config.primary_ip);
-    configText = configText.replace(/\{\{\s*ip\s*\}\}/g, config.primary_ip);
-    configText = configText.replace(/\{\{\s*smtp_user\s*\}\}/g, config.smtp_user || '');
-    configText = configText.replace(/\{\{\s*SMTP_USERNAME\s*\}\}/g, config.smtp_user || '');
-    configText = configText.replace(/\{\{\s*smtp_pass\s*\}\}/g, config.smtp_pass_encrypted ? decrypt(config.smtp_pass_encrypted) : '');
-    configText = configText.replace(/\{\{\s*SMTP_PASSWORD\s*\}\}/g, config.smtp_pass_encrypted ? decrypt(config.smtp_pass_encrypted) : '');
-    configText = configText.replace(/\{\{\s*smtp_port\s*\}\}/g, String(config.smtp_port || 2525));
-    configText = configText.replace(/\{\{\s*dkim_selector\s*\}\}/g, config.dkim_selector || 'dkim');
-    configText = configText.replace(/\{\{\s*monitor_port\s*\}\}/g, String(config.monitor_port || 1983));
-
-    configText = configText.replace('{{ SECONDARY_VMTA_BLOCKS }}', '');
-    configText = configText.replace('{{ SECONDARY_VMTA_POOL_ENTRIES }}', '');
-
-    if (config.secondary_ips) {
-      const secIps = config.secondary_ips.split('\n').map(i => i.trim()).filter(Boolean);
-      let vmtaBlocks = '';
-      let poolEntries = '';
-      secIps.forEach((ip, idx) => {
-        const vmtaName = `vmta-${idx + 1}`;
-        vmtaBlocks += `\n<virtual-mta ${vmtaName}>\n    smtp-source-ip ${ip}\n</virtual-mta>\n`;
-        poolEntries += `    add-vmta ${vmtaName}\n`;
-      });
-      configText = configText + vmtaBlocks;
-      if (poolEntries) {
-        configText += `\n<virtual-mta-pool pool>\n${poolEntries}</virtual-mta-pool>\n`;
-      }
-    }
-
-    await sshExecSafe(`cat > /etc/pmta/config << 'CONFIGEOF'\n${configText}\nCONFIGEOF`);
-    send('Configuration written to /etc/pmta/config');
-
-    send('Starting PowerMTA service...');
-    await sshExecSafe('chkconfig --add pmta 2>/dev/null || systemctl daemon-reload 2>/dev/null || true');
-    await sshExecSafe('service pmta start 2>&1 || pmtad 2>&1 &', 60000);
-    try {
-      await sshExecSafe('service pmtahttp start 2>&1 || nohup pmtahttpd >/dev/null 2>&1 &', 30000);
-    } catch {
-      send('pmtahttp could not be started (non-critical). PowerMTA core daemon is running.');
-    }
-    send('PowerMTA service started');
-
-    send('Configuring firewall...');
-    const smtpPort = Number(config.smtp_port || 2525);
     const monitorPort = Number(config.monitor_port || 1983);
-    const firewallCmd = `
-if command -v firewall-cmd >/dev/null 2>&1; then
-  firewall-cmd --permanent --add-port=25/tcp >/dev/null 2>&1 || true
-  firewall-cmd --permanent --add-port=80/tcp >/dev/null 2>&1 || true
-  firewall-cmd --permanent --add-port=443/tcp >/dev/null 2>&1 || true
-  firewall-cmd --permanent --add-port=587/tcp >/dev/null 2>&1 || true
-  firewall-cmd --permanent --add-port=465/tcp >/dev/null 2>&1 || true
-  firewall-cmd --permanent --add-port=${smtpPort}/tcp >/dev/null 2>&1 || true
-  firewall-cmd --permanent --add-port=${monitorPort}/tcp >/dev/null 2>&1 || true
-  firewall-cmd --reload >/dev/null 2>&1 || true
-  echo firewalld
-elif command -v ufw >/dev/null 2>&1; then
-  ufw allow 25/tcp >/dev/null 2>&1 || true
-  ufw allow 80/tcp >/dev/null 2>&1 || true
-  ufw allow 443/tcp >/dev/null 2>&1 || true
-  ufw allow 587/tcp >/dev/null 2>&1 || true
-  ufw allow 465/tcp >/dev/null 2>&1 || true
-  ufw allow ${smtpPort}/tcp >/dev/null 2>&1 || true
-  ufw allow ${monitorPort}/tcp >/dev/null 2>&1 || true
-  ufw reload >/dev/null 2>&1 || true
-  echo ufw
-else
-  iptables -I INPUT -p tcp --dport 25 -j ACCEPT 2>/dev/null || true
-  iptables -I INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
-  iptables -I INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
-  iptables -I INPUT -p tcp --dport 587 -j ACCEPT 2>/dev/null || true
-  iptables -I INPUT -p tcp --dport 465 -j ACCEPT 2>/dev/null || true
-  iptables -I INPUT -p tcp --dport ${smtpPort} -j ACCEPT 2>/dev/null || true
-  iptables -I INPUT -p tcp --dport ${monitorPort} -j ACCEPT 2>/dev/null || true
-  echo iptables
-fi
-`.trim().replace(/\n/g, '; ');
-    const { stdout: fw } = await sshExecSafe(firewallCmd, 30000);
-    send(`Firewall updated (${(fw || '').trim() || 'unknown'})`);
+    const smtpPort = Number(config.smtp_port || 2525);
+    let pubKey = '';
+    let rollbackNeeded = false;
 
-    send('Verifying service status...');
-    const { stdout: pidCheck } = await sshExecSafe('pgrep -f pmtad || echo "not running"');
-    send(`PowerMTA daemon PID: ${pidCheck.trim()}`);
+    const rollback = async () => {
+      send('Rolling back installation...');
+      await sshExecSafe('pkill -f pmtad 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('pkill -f pmtahttpd 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('rm -rf /etc/pmta /var/spool/pmta').catch(() => {});
+      await sshExecSafe('rm -f /usr/sbin/pmtad /usr/sbin/pmtahttpd').catch(() => {});
+      await sshExecSafe('iptables -D INPUT -p tcp --dport ' + monitorPort + ' -j ACCEPT 2>/dev/null || true').catch(() => {});
+      send('Rollback complete — system returned to pre-install state');
+    };
 
-    send('Checking port bindings...');
-    const portCheckCmd = `
+    try {
+      send('Detecting operating system...');
+      const { stdout: osInfo } = await sshExecSafe('cat /etc/os-release | head -10 && uname -m', 15000);
+      send(`OS: ${osInfo.trim().split('\n')[0]}`);
+      const isDebian = /ubuntu|debian/i.test(osInfo);
+      const isRhel = /almalinux|rocky|centos|rhel|red hat/i.test(osInfo);
+      if (!isDebian && !isRhel) {
+        send('⚠️ Warning: Unknown OS. Attempting RPM installation as fallback.');
+      }
+
+      send('Checking /root/pmta_files/ on target system...');
+      const { stdout: dirCheck } = await sshExecSafe('ls -la /root/pmta_files/ 2>&1 || echo DIRECTORY_NOT_FOUND', 10000);
+      if (dirCheck.includes('DIRECTORY_NOT_FOUND') || dirCheck.includes('No such file')) {
+        throw new Error('/root/pmta_files/ does not exist on target system. Upload files first.');
+      }
+      send('Files found');
+
+      send('Verifying binary checksums...');
+      const { stdout: pmtadSha } = await sshExecSafe('sha256sum /root/pmta_files/pmtad 2>/dev/null || echo NO_BINARY', 10000);
+      const { stdout: httpdSha } = await sshExecSafe('sha256sum /root/pmta_files/pmtahttpd 2>/dev/null || echo NO_BINARY', 10000);
+      if (pmtadSha.includes('NO_BINARY') || httpdSha.includes('NO_BINARY')) {
+        send('⚠️  Binary checksum files not found — proceeding without hash verification.');
+      } else {
+        send(`pmtad: ${pmtadSha.split(' ')[0]}`);
+        send(`pmtahttpd: ${httpdSha.split(' ')[0]}`);
+      }
+
+      send('Installing system dependencies...');
+      if (isDebian) {
+        await sshExecSafe('apt-get update -qq && apt-get install -y openssl curl wget unzip iptables', 180000);
+      } else {
+        await sshExecSafe('yum install -y openssl curl wget unzip iptables 2>/dev/null || dnf install -y openssl curl wget unzip iptables', 180000);
+      }
+      send('Dependencies installed');
+
+      send('Stopping existing PowerMTA services...');
+      await sshExecSafe('pkill -f pmtad 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('pkill -f pmtahttpd 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('systemctl stop pmta 2>/dev/null || service pmta stop 2>/dev/null || true').catch(() => {});
+      send('Services stopped');
+
+      send('Creating directories...');
+      await sshExecSafe('mkdir -p /etc/pmta /var/spool/pmta /var/log/pmta').catch(() => {});
+      send('Directories created');
+
+      send('Listing /root/pmta_files/ contents...');
+      const { stdout: fileList } = await sshExecSafe('ls -la /root/pmta_files/', 10000);
+      send(fileList.substring(0, 200));
+
+      send('Installing PowerMTA package(s)...');
+      if (isDebian) {
+        const { stdout: debFiles } = await sshExecSafe('ls /root/pmta_files/*.deb 2>/dev/null || echo NO_DEB', 10000);
+        if (debFiles.includes('NO_DEB')) {
+          send('No .deb found, falling back to RPM.');
+          await sshExecSafe('cd /root/pmta_files && rpm -ivh *.rpm 2>&1 || true', 180000);
+        } else {
+          await sshExecSafe('cd /root/pmta_files && dpkg -i *.deb 2>&1 || (apt-get install -f -y && dpkg -i *.deb 2>&1) || true', 180000);
+        }
+      } else {
+        await sshExecSafe('cd /root/pmta_files && rpm -ivh *.rpm 2>&1 || true', 180000);
+      }
+      send('Package install complete');
+      rollbackNeeded = true;
+
+      send('Copying binaries from /root/pmta_files/...');
+      await sshExecSafe('cp -f /root/pmta_files/pmtad /usr/sbin/pmtad 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('cp -f /root/pmta_files/pmtahttpd /usr/sbin/pmtahttpd 2>/dev/null || true').catch(() => {});
+      await sshExecSafe('chmod 755 /usr/sbin/pmtad /usr/sbin/pmtahttpd').catch(() => {});
+      send('Binaries installed');
+
+      send('Generating DKIM keypair...');
+      await sshExecSafe('mkdir -p /etc/pmta && openssl genrsa -out /etc/pmta/dkim.pem 2048 2>&1', 30000).catch(() => {});
+      await sshExecSafe('chmod 600 /etc/pmta/dkim.pem').catch(() => {});
+      const { stdout: dkimPub } = await sshExecSafe('openssl rsa -in /etc/pmta/dkim.pem -pubout 2>/dev/null | grep -v "---" | tr -d "\\n"', 10000);
+      pubKey = dkimPub.trim();
+      send(`DKIM key generated`);
+
+      send('Writing PowerMTA configuration...');
+      let configText = config.config_text || '';
+      configText = configText.replace(/\{\{\s*domain\s*\}\}/g, config.domain);
+      configText = configText.replace(/\{\{\s*hostname\s*\}\}/g, config.hostname || config.domain);
+      configText = configText.replace(/\{\{\s*primary_ip\s*\}\}/g, config.primary_ip);
+      configText = configText.replace(/\{\{\s*PRIMARY_IP\s*\}\}/g, config.primary_ip);
+      configText = configText.replace(/\{\{\s*ip\s*\}\}/g, config.primary_ip);
+      configText = configText.replace(/\{\{\s*smtp_user\s*\}\}/g, config.smtp_user || '');
+      configText = configText.replace(/\{\{\s*SMTP_USERNAME\s*\}\}/g, config.smtp_user || '');
+      configText = configText.replace(/\{\{\s*smtp_pass\s*\}\}/g, config.smtp_pass_encrypted ? decrypt(config.smtp_pass_encrypted) : '');
+      configText = configText.replace(/\{\{\s*SMTP_PASSWORD\s*\}\}/g, config.smtp_pass_encrypted ? decrypt(config.smtp_pass_encrypted) : '');
+      configText = configText.replace(/\{\{\s*smtp_port\s*\}\}/g, String(smtpPort));
+      configText = configText.replace(/\{\{\s*dkim_selector\s*\}\}/g, config.dkim_selector || 'dkim');
+      configText = configText.replace(/\{\{\s*monitor_port\s*\}\}/g, String(monitorPort));
+      configText = configText.replace('{{ SECONDARY_VMTA_BLOCKS }}', '');
+      configText = configText.replace('{{ SECONDARY_VMTA_POOL_ENTRIES }}', '');
+
+      if (config.secondary_ips) {
+        const secIps = config.secondary_ips.split('\n').map(i => i.trim()).filter(Boolean);
+        let vmtaBlocks = '';
+        let poolEntries = '';
+        secIps.forEach((ip, idx) => {
+          const name = `vmta${idx + 1}`;
+          vmtaBlocks += `\n<virtual-mta ${name}>\n    smtp-source-ip ${ip}\n</virtual-mta>\n`;
+          poolEntries += `    add-vmta ${name}\n`;
+        });
+        configText += vmtaBlocks;
+        if (poolEntries) configText += `\n<virtual-mta-pool pool>\n${poolEntries}</virtual-mta-pool>\n`;
+      }
+
+      await sshExecSafe(`cat > /etc/pmta/config << 'CONFIGEOF'\n${configText}\nCONFIGEOF`).catch(() => {});
+      await sshExecSafe('chmod 600 /etc/pmta/config /etc/pmta/license 2>/dev/null || chmod 600 /etc/pmta/config').catch(() => {});
+      send('Configuration written to /etc/pmta/config');
+
+      send('Starting PowerMTA daemon...');
+      await sshExecSafe('/usr/sbin/pmtad 2>&1 &', 15000).catch(() => {});
+      await sshExecSafe('nohup /usr/sbin/pmtahttpd >/dev/null 2>&1 &', 10000).catch(() => {});
+      send('PowerMTA services started');
+
+      send('Configuring firewall...');
+      const fwCmd = `iptables -A INPUT -p tcp --dport ${monitorPort} -j ACCEPT`;
+      await sshExecSafe(fwCmd, 10000).catch(() => {});
+      send(`Firewall rule added for port ${monitorPort}`);
+
+      send('Verifying service status...');
+      const { stdout: pidCheck } = await sshExecSafe('pgrep -f pmtad || echo "not running"', 10000);
+      send(`PowerMTA daemon PID: ${pidCheck.trim()}`);
+
+      send('Checking port bindings...');
+      const portCheckCmd = `
 T=""
 command -v timeout >/dev/null 2>&1 && T="timeout 8"
-if command -v ss >/dev/null 2>&1; then
-  $T ss -tlnp 2>/dev/null
-elif command -v netstat >/dev/null 2>&1; then
-  $T netstat -tlnp 2>/dev/null
-else
-  echo "no-port-tool"
-fi | grep -E ':(${smtpPort}|${monitorPort})' || echo "Ports not yet bound"
+if command -v ss >/dev/null 2>&1; then $T ss -tlnp 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then $T netstat -tlnp 2>/dev/null; else echo "no-port-tool"; fi | grep -E ':(${smtpPort}|${monitorPort})' || echo "Ports not yet bound"
 `.trim().replace(/\n/g, '; ');
-    const { stdout: portCheck } = await sshExecSafe(portCheckCmd, 15000);
-    send(`Port binding check: ${portCheck.trim() || `SMTP:${config.smtp_port} & Monitor:${config.monitor_port}`}`);
+      const { stdout: portCheck } = await sshExecSafe(portCheckCmd, 15000);
+      send(`Port binding: ${(portCheck || '').trim() || `SMTP:${smtpPort} & Monitor:${monitorPort}`}`);
 
-    send('Updating database with installation status...');
-    await query("UPDATE pmta_configs SET status = 'installed', installed_at = NOW(), dkim_public_key = $1 WHERE id = $2", [pubKey, config.id]);
+      send('Updating database...');
+      await query("UPDATE pmta_configs SET status = 'installed', installed_at = NOW(), dkim_public_key = $1 WHERE id = $2", [pubKey || '', config.id]);
 
-    send({ message: 'PowerMTA installation completed successfully!', success: true, done: true });
-    send({ message: 'Next steps: Configure your DNS records (SPF, DKIM, DMARC, PTR) before sending.', success: true });
+      send({ message: 'PowerMTA installation completed successfully!', success: true, done: true });
+      send({ message: 'Next steps: Configure your DNS records (SPF, DKIM, DMARC, PTR) before sending.', success: true });
+
+    } catch (installErr) {
+      if (rollbackNeeded) await rollback();
+      throw installErr;
+    }
 
   } catch (err) {
     send({ message: `Error: ${err.message}`, success: false, done: true });
