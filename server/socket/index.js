@@ -19,8 +19,9 @@ export function initSocketIO(httpServer) {
   // JWT authentication middleware for Socket.io — allow guest connections
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+    const GUEST_USER_ID = '00000000-0000-0000-0000-000000000000';
     if (!token) {
-      socket.user = { id: 'guest', email: 'guest@local', role: 'admin' };
+      socket.user = { id: GUEST_USER_ID, email: 'guest@local', role: 'admin' };
       return next();
     }
     try {
@@ -28,7 +29,7 @@ export function initSocketIO(httpServer) {
       socket.user = decoded;
       next();
     } catch (err) {
-      socket.user = { id: 'guest', email: 'guest@local', role: 'admin' };
+      socket.user = { id: GUEST_USER_ID, email: 'guest@local', role: 'admin' };
       next();
     }
   });

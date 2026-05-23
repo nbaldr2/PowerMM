@@ -4,6 +4,8 @@ import { query } from '../config/database.js';
 import { hashToken } from '../utils/encryption.js';
 import logger from '../utils/logger.js';
 
+const GUEST_USER_ID = '00000000-0000-0000-0000-000000000000';
+
 /**
  * JWT authentication middleware.
  * If no token is provided, assigns a default guest user so the app works without login.
@@ -21,7 +23,7 @@ export function authenticate(req, res, next) {
   }
 
   if (!token) {
-    req.user = { id: null, role: 'admin', email: 'guest@local' };
+    req.user = { id: GUEST_USER_ID, role: 'admin', email: 'guest@local' };
     return next();
   }
 
@@ -30,7 +32,7 @@ export function authenticate(req, res, next) {
     req.user = decoded;
     next();
   } catch (err) {
-    req.user = { id: null, role: 'admin', email: 'guest@local' };
+    req.user = { id: GUEST_USER_ID, role: 'admin', email: 'guest@local' };
     next();
   }
 }
