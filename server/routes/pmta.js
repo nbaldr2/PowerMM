@@ -502,6 +502,15 @@ router.post('/install', authenticate, authorize('admin'), async (req, res) => {
         send('⚠️ Warning: Unknown OS. Attempting RPM installation as fallback.');
       }
 
+      send('Checking if PowerMTA is already installed...');
+      const { stdout: pmtaCheck } = await sshExecSafe('command -v pmtad && pgrep -f pmtad >/dev/null && echo RUNNING || echo NOT_RUNNING', 10000);
+      const pmtaAlreadyInstalled = pmtaCheck.includes('pmtad') && !pmtaCheck.includes('NOT_RUNNING');
+      if (pmtaAlreadyInstalled) {
+        send('⚠️ PowerMTA daemon already running. Will reload config after update.');
+      } else {
+        send('No existing PMTA installation detected.');
+      }
+
       send('Checking /root/pmta_files/ on target system...');
       const { stdout: dirCheck } = await sshExecSafe('ls -A /root/pmta_files/ 2>&1 || echo DIRECTORY_NOT_FOUND', 10000);
       const targetEmpty = !dirCheck.includes('pmta') && !dirCheck.includes('PowerMTA');
@@ -629,6 +638,10 @@ send('Installing system dependencies...');
       await sshExecSafe('systemctl start pmta 2>/dev/null || service pmta start 2>/dev/null || (/usr/sbin/pmtad 2>&1 &) || true', 15000).catch(() => {});
       await sshExecSafe('systemctl start pmtahttpd 2>/dev/null || service pmtahttp start 2>/dev/null || nohup /usr/sbin/pmtahttpd >/dev/null 2>&1 & || true', 10000).catch(() => {});
       send('PowerMTA services started');
+
+      send('Reloading PowerMTA to apply new configuration...');
+      await sshExecSafe('pmta reload 2>&1 || killall -HUP pmtad 2>/dev/null || pkill -HUP pmtad 2>/dev/null || true', 15000).catch(() => {});
+      send('Configuration reloaded — new DKIM and settings are now active');
 
       send('Configuring firewall...');
       await sshExecSafe('apt-get install -y ufw firewalld 2>/dev/null || dnf install -y ufw firewalld 2>/dev/null || true').catch(() => {});
