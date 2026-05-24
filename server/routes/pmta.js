@@ -634,25 +634,25 @@ send('Installing system dependencies...');
       await sshExecSafe('apt-get install -y ufw firewalld 2>/dev/null || dnf install -y ufw firewalld 2>/dev/null || true').catch(() => {});
       const fwCmd = `
 if command -v firewall-cmd >/dev/null 2>&1; then
-  firewall-cmd --add-port=${smtpPort}/tcp --permanent >/dev/null 2>&1 || true
-  firewall-cmd --add-port=${monitorPort}/tcp --permanent >/dev/null 2>&1 || true
-  firewall-cmd --add-port=8080/tcp --permanent >/dev/null 2>&1 || true
-  firewall-cmd --reload >/dev/null 2>&1 || true
-  echo firewalld
+  firewall-cmd --add-port=${smtpPort}/tcp --permanent 2>&1
+  firewall-cmd --add-port=${monitorPort}/tcp --permanent 2>&1
+  firewall-cmd --add-port=8080/tcp --permanent 2>&1
+  firewall-cmd --reload 2>&1
+  echo "OK (firewalld)"
 elif command -v ufw >/dev/null 2>&1; then
-  ufw allow ${smtpPort}/tcp >/dev/null 2>&1 || true
-  ufw allow ${monitorPort}/tcp >/dev/null 2>&1 || true
-  ufw allow 8080/tcp >/dev/null 2>&1 || true
-  ufw reload >/dev/null 2>&1 || true
-  echo ufw
+  ufw allow ${smtpPort}/tcp 2>&1
+  ufw allow ${monitorPort}/tcp 2>&1
+  ufw allow 8080/tcp 2>&1
+  ufw reload 2>&1
+  echo "OK (ufw)"
 else
-  iptables -A INPUT -p tcp --dport ${smtpPort} -j ACCEPT 2>/dev/null || true
-  iptables -A INPUT -p tcp --dport ${monitorPort} -j ACCEPT 2>/dev/null || true
-  iptables -A INPUT -p tcp --dport 8080 -j ACCEPT 2>/dev/null || true
-  echo iptables
-fi`.trim().replace(/\n/g, '; ');
-      const { stdout: fwType } = await sshExecSafe(fwCmd, 30000);
-      send(`Firewall updated (${(fwType || '').trim() || 'ok'})`);
+  iptables -A INPUT -p tcp --dport ${smtpPort} -j ACCEPT 2>&1
+  iptables -A INPUT -p tcp --dport ${monitorPort} -j ACCEPT 2>&1
+  iptables -A INPUT -p tcp --dport 8080 -j ACCEPT 2>&1
+  echo "OK (iptables)"
+fi`.trim();
+      const { stdout: fwOut } = await sshExecSafe(fwCmd, 30000);
+      send(`Firewall output: ${(fwOut || '').trim().split('\n').filter(l => l.trim()).join(' | ')}`);
 
       send('Verifying service status...');
       const { stdout: pidCheck } = await sshExecSafe('pgrep -f pmtad || echo "not running"', 10000);
