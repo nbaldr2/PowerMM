@@ -162,5 +162,5 @@ export function processHeaders(headersText, recipient, campaignData) {
  * Generate a unique Message-ID.
  */
 export function generateMessageId(domain) {
-  return `<${uuidv4()}@${domain || 'mail.moonmailer.pro'}>`;
+  return `<${uuidv4()}@${domain || 'mail.powermm.pro'}>`;
 }

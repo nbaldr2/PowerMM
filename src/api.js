@@ -139,6 +139,10 @@ class ApiClient {
     return this.request('/smtp/test-inline', { method: 'POST', body: config });
   }
 
+  async testSmtpSend(config) {
+    return this.request('/smtp/test-send', { method: 'POST', body: config });
+  }
+
   async fillFromPmta() {
     return this.request('/smtp/fill-pmta', { method: 'POST' });
   }

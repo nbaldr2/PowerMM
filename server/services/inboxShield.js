@@ -35,7 +35,7 @@ export function rotateHeaders(headersObj) {
 }
 
 export function addReputationHeaders(headers, domain) {
-  return { ...headers, 'X-Mailer': `MoonMailer Pro v2026.${Math.floor(Math.random() * 12) + 1}`, 'X-Originating-IP': '[127.0.0.1]' };
+  return { ...headers, 'X-Mailer': `PowerMM Pro v2026.${Math.floor(Math.random() * 12) + 1}`, 'X-Originating-IP': '[127.0.0.1]' };
 }
 
 export function encodeSubjectBase64(subject) {

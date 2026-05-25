@@ -68,8 +68,8 @@ const DEFAULT_HEADERS = `MIME-Version: 1.0
 Date: [-date-]
 Message-ID: <[-randomuuid-]@domain.com>
 X-Campaign-ID: [-randomnumber-]
-X-Mailer: MoonMailer Pro v2026.5
-Feedback-ID: [-shortid-]:default:MoonMailer`;
+X-Mailer: PowerMM Pro v2026.5
+Feedback-ID: [-shortid-]:default:PowerMM`;
 
 function App() {
   const [activeTab, setActiveTab] = useState('compose') // 'compose', 'settings'
@@ -116,6 +116,20 @@ function App() {
 
     socketClient.on('pmta:progress', handlePmtaProgress)
     return () => socketClient.off('pmta:progress', handlePmtaProgress)
+  }, [])
+
+  // Load SMTP servers from backend on mount
+  const loadSmtpServers = async () => {
+    try {
+      const data = await api.getSmtpServers()
+      setSmtpServers(data.servers || data || [])
+    } catch (err) {
+      console.error('Failed to load SMTP servers:', err.message)
+    }
+  }
+
+  useEffect(() => {
+    loadSmtpServers()
   }, [])
 
   // ---------------------------------------------------------
@@ -515,10 +529,10 @@ ${DEFAULT_HTML_BODY}`
   const [smtpPass, setSmtpPass] = useState('')
   const [smtpEnabled, setSmtpEnabled] = useState(true)
   const [smtpSubTab, setSmtpSubTab] = useState('single')
-  const [smtpPool, setSmtpPool] = useState([
-    { host: '127.0.0.1', port: 25, user: 'local-mta', enabled: true },
-    { host: 'relay.fastmail-relay.net', port: 587, user: 'fast-relay@domain.com', enabled: true }
-  ])
+  const [poolName, setPoolName] = useState('default-pool')
+  const [smtpWeight, setSmtpWeight] = useState(1)
+  const [smtpDailyLimit, setSmtpDailyLimit] = useState(5000)
+  const [smtpServers, setSmtpServers] = useState([])
 
   // Proxy settings toggle
   const [showProxy, setShowProxy] = useState(false)
@@ -555,36 +569,118 @@ ${DEFAULT_HTML_BODY}`
   const [testingSmtp, setTestingSmtp] = useState(false)
   const [smtpStatusMessage, setSmtpStatusMessage] = useState(null)
 
-  const handleTestSmtp = () => {
+  const handleTestSmtp = async () => {
     setTestingSmtp(true)
     setSmtpStatusMessage(null)
-    setTimeout(() => {
-      setTestingSmtp(false)
+    try {
+      const result = await api.testSmtpInline({
+        host: smtpHost,
+        port: smtpPort,
+        encryption: smtpEncryption,
+        username: smtpUser,
+        password: smtpPass
+      })
       setSmtpStatusMessage({
         type: 'success',
-        text: `Successfully authenticated with ${smtpHost}:${smtpPort}. Latency: 42ms. STARTTLS accepted.`
+        text: result.message || `Successfully authenticated with ${smtpHost}:${smtpPort}.`
       })
-    }, 1500)
-  }
-
-  const handleAddToPool = () => {
-    const newPoolItem = {
-      host: smtpHost,
-      port: smtpPort,
-      user: smtpUser || 'anonymous',
-      enabled: true
+    } catch (err) {
+      setSmtpStatusMessage({
+        type: 'error',
+        text: err.message || 'Connection failed'
+      })
+    } finally {
+      setTestingSmtp(false)
     }
-    setSmtpPool([...smtpPool, newPoolItem])
-    alert(`Added ${smtpHost}:${smtpPort} to the PowerMTA Server Pool!`)
   }
 
-  const fillFromPmta = () => {
-    setSmtpHost('127.0.0.1')
-    setSmtpPort(2525)
-    setSmtpEncryption('None')
-    setSmtpUser('pmta-relay-user')
-    setSmtpPass('•••••••••••••')
-    alert("SMTP configuration loaded automatically from current local PowerMTA settings!")
+  const handleAddToPool = async () => {
+    try {
+      const result = await api.addSmtpServer({
+        host: smtpHost,
+        port: smtpPort,
+        encryption: smtpEncryption,
+        username: smtpUser,
+        password: smtpPass,
+        pool_name: poolName,
+        weight: smtpWeight,
+        daily_limit: smtpDailyLimit,
+        enabled: smtpEnabled
+      })
+      await loadSmtpServers()
+      alert(`Added ${smtpHost}:${smtpPort} to pool "${poolName}" successfully!`)
+    } catch (err) {
+      alert('Failed to add SMTP server: ' + err.message)
+    }
+  }
+
+  const fillFromPmta = async () => {
+    try {
+      const data = await api.fillFromPmta()
+      if (data.host) setSmtpHost(data.host)
+      if (data.port) setSmtpPort(data.port)
+      if (data.encryption) setSmtpEncryption(data.encryption)
+      if (data.username) setSmtpUser(data.username)
+      if (data.password) setSmtpPass(data.password)
+      alert(data.message || "SMTP configuration loaded automatically from PowerMTA settings!")
+    } catch (err) {
+      alert('Failed to load PMTA settings: ' + err.message)
+    }
+  }
+
+  const handleDeleteSmtp = async (serverId) => {
+    try {
+      await api.deleteSmtpServer(serverId)
+      await loadSmtpServers()
+    } catch (err) {
+      alert('Failed to delete SMTP server: ' + err.message)
+    }
+  }
+
+  const [sendingTestEmail, setSendingTestEmail] = useState(false)
+  const [testEmailLogs, setTestEmailLogs] = useState([])
+  const testEmailRef = useRef(null)
+
+  useEffect(() => {
+    if (testEmailRef.current) {
+      testEmailRef.current.scrollTop = testEmailRef.current.scrollHeight
+    }
+  }, [testEmailLogs])
+
+  const handleSendTestEmail = async () => {
+    setSendingTestEmail(true)
+    setTestEmailLogs([`[${new Date().toLocaleTimeString()}] Initializing SMTP test send...`])
+    try {
+      const result = await api.testSmtpSend({
+        host: smtpHost,
+        port: smtpPort,
+        encryption: smtpEncryption,
+        username: smtpUser,
+        password: smtpPass,
+        to: 'baldr@proton.me',
+        subject: 'SMTP Test',
+        body: `Your SMTP FROM ${smtpHost} is working.`
+      })
+      if (result.logs) {
+        result.logs.forEach(log => setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`]))
+      }
+      setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ✅ SMTP is fully functional`])
+    } catch (err) {
+      const msg = err.message || 'Unknown error'
+      if (msg.includes('timeout') || msg.includes('timed out')) {
+        setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Connection timed out. Check firewall/network.`])
+      } else if (msg.includes('DNS') || msg.includes('lookup') || msg.includes('gaierror')) {
+        setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ DNS lookup failed. Check server address.`])
+      } else if (msg.includes('auth') || msg.includes('Authentication')) {
+        setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Authentication failed. Check username/password.`])
+      } else if (msg.includes('connect') || msg.includes('Connection')) {
+        setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Could not connect to server. Check port/host.`])
+      } else {
+        setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ SMTP error: ${msg}`])
+      }
+    } finally {
+      setSendingTestEmail(false)
+    }
   }
 
   // ---------------------------------------------------------
@@ -675,9 +771,25 @@ ${DEFAULT_HTML_BODY}`
         reply_to: replyTo,
         html_body: htmlBody,
         text_body: 'Please view this email in an HTML compatible client.',
-        headers: headersOpen ? headersText : '',
+        custom_headers: headersOpen ? headersText : '',
         inbox_shield: shieldState,
-        randomizer: randomizerState
+        content_randomizer: randomizerState,
+        creative_engine: creativeState,
+        batch_settings: {
+          batch_size: batchSize,
+          speed_mode: speedMode,
+          batch_delay_ms: batchDelay,
+          email_delay_ms: emailDelay,
+          keep_alive: keepAlive,
+          connection_pooling: connectionPooling,
+          gc_optimize: gcOptimize
+        },
+        seed_settings: {
+          send_seed_test: sendSeedTest,
+          seed_delay_seconds: seedDelay,
+          seed_addresses: seedAddresses.split('\n').filter(s => s.trim().includes('@'))
+        },
+        pool_name: pmtaPoolName
       })
 
       // Join the socket room to get live updates
@@ -700,44 +812,87 @@ ${DEFAULT_HTML_BODY}`
   const [testingCloudmark, setTestingCloudmark] = useState(false)
   const [spamScore, setSpamScore] = useState(null)
   const [cloudmarkScore, setCloudmarkScore] = useState(null)
+  const [ipReputationResults, setIpReputationResults] = useState(null)
+  const [checkingIp, setCheckingIp] = useState(false)
 
-  const runSpamassassin = () => {
+  const runSpamassassin = async () => {
     setTestingSpam(true)
     setSpamScore(null)
-    setTimeout(() => {
-      setTestingSpam(false)
-      setSpamScore({
-        score: '9.8 / 10.0',
-        rating: 'EXCELLENT',
-        details: [
-          { check: 'DKIM Signature Alignment', status: 'pass', desc: 'Valid 2048-bit signature found' },
-          { check: 'SPF Alignment', status: 'pass', desc: 'Server IP authorized' },
-          { check: 'DMARC Alignment', status: 'pass', desc: 'Header domain matches SPF/DKIM' },
-          { check: 'Reverse DNS (rDNS)', status: 'pass', desc: '217.154.81.50 points to mail.mycompany.co.uk' },
-          { check: 'Bayesian Filter Probability', status: 'pass', desc: '0.003% probability (ham classification)' },
-          { check: 'Homoglyph Obfuscation detection', status: 'warning', desc: 'Zero harmful characters flagged' },
-          { check: 'List-Unsubscribe implementation', status: 'pass', desc: 'RFC 8058 valid header present' }
-        ]
+    try {
+      const result = await api.checkSpamAssassin({
+        subject,
+        from_email: fromEmail,
+        from_name: fromName,
+        reply_to: replyTo,
+        html_body: getCompiledHtml(),
+        headers: headersOpen ? headersText : ''
       })
-    }, 2000)
+      setSpamScore({
+        score: result.score || 'N/A',
+        rating: result.rating || 'PENDING',
+        details: (result.rules || result.details || []).map(r => ({
+          check: r.check || r.rule || r.name,
+          status: r.status || (r.pass ? 'pass' : 'fail'),
+          desc: r.desc || r.description || r.score?.toString() || ''
+        }))
+      })
+    } catch (err) {
+      setSpamScore({
+        score: 'ERROR',
+        rating: 'FAILED',
+        details: [{ check: 'API Error', status: 'fail', desc: err.message }]
+      })
+    } finally {
+      setTestingSpam(false)
+    }
   }
 
-  const runCloudmark = () => {
+  const runCloudmark = async () => {
     setTestingCloudmark(true)
     setCloudmarkScore(null)
-    setTimeout(() => {
-      setTestingCloudmark(false)
-      setCloudmarkScore({
-        rating: 'CLEAN REPUTATION (0% spam ratio)',
-        status: 'ACCEPTED',
-        details: [
-          { node: 'OX Cloudmark Reputation Gateway', result: 'Green status / High IP trust level' },
-          { node: 'Fingerprint mutation resistance', result: '99.4% (Stealth structure actively rotating)' },
-          { node: 'Spamhaus Blocklist Check', result: 'Not listed (SBL/XBL/PBL secure)' },
-          { node: 'Barracuda Reputation Network', result: 'Score 0.0 (Neutral/Safe)' }
-        ]
+    try {
+      const result = await api.checkCloudmark({
+        subject,
+        from_email: fromEmail,
+        from_name: fromName,
+        html_body: getCompiledHtml(),
+        headers: headersOpen ? headersText : '',
+        shield_state: shieldState
       })
-    }, 1800)
+      setCloudmarkScore({
+        rating: result.rating || result.verdict || 'PENDING',
+        status: result.status || 'CHECKED',
+        details: (result.details || result.checks || []).map(c => ({
+          node: c.node || c.check || c.name,
+          result: c.result || c.value || c.score?.toString() || ''
+        }))
+      })
+    } catch (err) {
+      setCloudmarkScore({
+        rating: 'ERROR',
+        status: 'FAILED',
+        details: [{ node: 'API Error', result: err.message }]
+      })
+    } finally {
+      setTestingCloudmark(false)
+    }
+  }
+
+  const handleLookupIp = async () => {
+    setCheckingIp(true)
+    setIpReputationResults(null)
+    try {
+      const result = await api.checkIpReputation(serverIp, sendingDomain)
+      setIpReputationResults(result)
+    } catch (err) {
+      setIpReputationResults({
+        error: err.message,
+        rbl: [],
+        dns: {}
+      })
+    } finally {
+      setCheckingIp(false)
+    }
   }
 
   // ---------------------------------------------------------
@@ -793,7 +948,7 @@ ${DEFAULT_HTML_BODY}`
   // Step 3 Configuration Customization & Config Editor
   const [useCustomConfig, setUseCustomConfig] = useState(false)
   const [pmtaConfigCode, setPmtaConfigCode] = useState(`host-name {{ hostname }}
-# PowerMTA 5.x config — generated by MoonMailer Installer
+# PowerMTA 5.x config — generated by PowerMM Installer
 # Generated: ${new Date().toISOString()}
 
 postmaster postmaster@{{ domain }}
@@ -938,7 +1093,7 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
   }
 
   const generateAndInsertIsp = () => {
-    let customBlocks = '\n# Custom ISP Rules injected by MoonMailer Rate Limits Manager\n'
+    let customBlocks = '\n# Custom ISP Rules injected by PowerMM Rate Limits Manager\n'
     ispRules.forEach(rule => {
       customBlocks += `<domain ${rule.domain}>\n    max-msg-rate ${rule.rate}/h\n    max-smtp-out ${rule.connections}\n    max-msg-per-connection ${rule.msgsPerConn}\n</domain>\n\n`
     })
@@ -1068,7 +1223,7 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-1.5 leading-none m-0">
-              MoonMailer <span className="text-brand-cyan font-mono text-sm tracking-wider uppercase border border-brand-cyan/30 px-1.5 py-0.5 rounded">Pro</span>
+              PowerMM <span className="text-brand-cyan font-mono text-sm tracking-wider uppercase border border-brand-cyan/30 px-1.5 py-0.5 rounded">Pro</span>
             </h1>
             <span className="text-xs text-brand-text/75 font-mono">v2.8 - PowerMM Platform</span>
           </div>
@@ -1345,7 +1500,7 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
                 >
                   <div className="flex items-center gap-2.5">
                     <Info className="w-4 h-4 text-brand-green" />
-                    <span className="font-bold text-brand-green text-md">MoonMailer Pro Tips Section</span>
+                    <span className="font-bold text-brand-green text-md">PowerMM Pro Tips Section</span>
                   </div>
                   {tipsOpen ? <ChevronUp className="w-4 h-4 text-brand-green" /> : <ChevronDown className="w-4 h-4 text-brand-green" />}
                 </button>
@@ -2343,7 +2498,7 @@ ${getCompiledHtml()}`}
                           : 'text-brand-text hover:text-white'
                         }`}
                     >
-                      {tab === 'single' ? 'Single Server' : `PMTA Server Pool (${smtpPool.length})`}
+                      {tab === 'single' ? 'Single Server' : `PMTA Server Pool (${smtpServers.length})`}
                     </button>
                   ))}
                 </div>
@@ -2352,7 +2507,7 @@ ${getCompiledHtml()}`}
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="space-y-1.5">
-                        <label className="text-xs text-brand-text-bright">SMTP Host</label>
+                        <label className="text-xs text-brand-text-bright">Host</label>
                         <input
                           type="text"
                           value={smtpHost}
@@ -2380,6 +2535,33 @@ ${getCompiledHtml()}`}
                           <option>TLS</option>
                           <option>SSL</option>
                         </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-brand-text-bright">Pool Name</label>
+                        <input
+                          type="text"
+                          value={poolName}
+                          onChange={(e) => setPoolName(e.target.value)}
+                          className="w-full bg-brand-bg border border-brand-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-brand-text-bright">Weight</label>
+                        <input
+                          type="number"
+                          value={smtpWeight}
+                          onChange={(e) => setSmtpWeight(parseInt(e.target.value) || 1)}
+                          className="w-full bg-brand-bg border border-brand-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-brand-text-bright">Daily Limit</label>
+                        <input
+                          type="number"
+                          value={smtpDailyLimit}
+                          onChange={(e) => setSmtpDailyLimit(parseInt(e.target.value) || 5000)}
+                          className="w-full bg-brand-bg border border-brand-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                        />
                       </div>
                     </div>
 
@@ -2474,6 +2656,13 @@ ${getCompiledHtml()}`}
                       >
                         ⚡ Fill from PMTA
                       </button>
+                      <button
+                        onClick={handleSendTestEmail}
+                        disabled={sendingTestEmail}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-extrabold transition-all cursor-pointer shadow-md disabled:opacity-50"
+                      >
+                        {sendingTestEmail ? 'Sending...' : 'Send Test Email'}
+                      </button>
                     </div>
 
                     {smtpStatusMessage && (
@@ -2481,6 +2670,25 @@ ${getCompiledHtml()}`}
                         }`}>
                         <Check className="w-4 h-4" />
                         {smtpStatusMessage.text}
+                      </div>
+                    )}
+
+                    {testEmailLogs.length > 0 && (
+                      <div className="bg-brand-bg/80 border border-brand-border rounded-xl p-3 space-y-2">
+                        <span className="text-[10px] font-bold text-white uppercase tracking-wider block font-mono flex items-center gap-1.5">
+                          <Terminal className="w-3 h-3 text-brand-cyan" />
+                          STDOUT/STDERR logs:
+                        </span>
+                        <div
+                          ref={testEmailRef}
+                          className="h-28 overflow-y-auto bg-brand-panel p-2.5 rounded border border-brand-border/60 font-mono text-[11px] leading-relaxed space-y-0.5"
+                        >
+                          {testEmailLogs.map((log, i) => (
+                            <div key={i} className={`${log.includes('✅') ? 'text-brand-green font-bold' : log.includes('❌') ? 'text-brand-red font-bold' : 'text-brand-cyan/85'}`}>
+                              {log}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2499,26 +2707,32 @@ ${getCompiledHtml()}`}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-brand-border/40 font-mono text-brand-text">
-                          {smtpPool.map((item, i) => (
-                            <tr key={i} className="hover:bg-brand-card/30">
-                              <td className="p-3 text-brand-text-bright">{item.host}</td>
-                              <td className="p-3">{item.port}</td>
-                              <td className="p-3">{item.user}</td>
-                              <td className="p-3">
-                                <span className="text-brand-green bg-brand-green/10 border border-brand-green/20 px-2 py-0.5 rounded text-[10px]">
-                                  Active Relay
-                                </span>
-                              </td>
-                              <td className="p-3 text-right">
-                                <button
-                                  onClick={() => setSmtpPool(smtpPool.filter((_, idx) => idx !== i))}
-                                  className="text-brand-red hover:text-brand-red/80 bg-none border-none p-1 cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </td>
+                          {smtpServers.length === 0 ? (
+                            <tr>
+                              <td colSpan="6" className="p-4 text-center text-brand-text/50">No SMTP servers configured yet. Add one above.</td>
                             </tr>
-                          ))}
+                          ) : (
+                            smtpServers.map((item, i) => (
+                              <tr key={item.id || i} className="hover:bg-brand-card/30">
+                                <td className="p-3 text-brand-text-bright">{item.host}</td>
+                                <td className="p-3">{item.port}</td>
+                                <td className="p-3">{item.username || item.user || '—'}</td>
+                                <td className="p-3">
+                                  <span className="text-brand-green bg-brand-green/10 border border-brand-green/20 px-2 py-0.5 rounded text-[10px]">
+                                    Active Relay
+                                  </span>
+                                </td>
+                                <td className="p-3 text-right">
+                                  <button
+                                    onClick={() => handleDeleteSmtp(item.id)}
+                                    className="text-brand-red hover:text-brand-red/80 bg-none border-none p-1 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -3132,7 +3346,7 @@ ${getCompiledHtml()}`}
                     <div className="flex gap-2">
                       <button
                         onClick={() => setPmtaConfigCode(`host-name {{ hostname }}
-# PowerMTA 5.x config — generated by MoonMailer Installer
+# PowerMTA 5.x config — generated by PowerMM Installer
 # Generated: ${new Date().toISOString()}
 
 postmaster postmaster@{{ domain }}
@@ -3613,7 +3827,7 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
             <div className="flex justify-between items-center border-b border-brand-border/60 pb-3">
               <div className="flex items-center gap-2">
                 <FileText className="w-5 h-5 text-brand-cyan" />
-                <h3 className="text-white font-bold text-md leading-none">MoonMailer Pro System Documentation</h3>
+                <h3 className="text-white font-bold text-md leading-none">PowerMM Pro System Documentation</h3>
               </div>
               <button
                 onClick={() => setShowDocs(false)}
@@ -3627,14 +3841,14 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
               <div className="space-y-2">
                 <h4 className="font-bold text-white text-sm">1. Introduction</h4>
                 <p>
-                  MoonMailer Pro is an enterprise-grade high-volume bulk mail campaign system designed to run on top of PowerMTA (Virtual MTA) mail delivery engines.
+                  PowerMM Pro is an enterprise-grade high-volume bulk mail campaign system designed to run on top of PowerMTA (Virtual MTA) mail delivery engines.
                 </p>
               </div>
 
               <div className="space-y-2">
                 <h4 className="font-bold text-white text-sm">2. HTML Template Token Reference</h4>
                 <p>
-                  These tags can be injected anywhere within the subject line, email raw headers, or the HTML message body. At send time, MoonMailer Pro dynamically evaluates the placeholders:
+                  These tags can be injected anywhere within the subject line, email raw headers, or the HTML message body. At send time, PowerMM Pro dynamically evaluates the placeholders:
                 </p>
                 <ul className="list-disc pl-5 space-y-1 text-brand-text-bright font-mono text-[10px]">
                   <li><strong className="text-brand-cyan">[-email-]</strong> - Target recipient's full email address</li>
@@ -3697,41 +3911,95 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
                   value={serverIp}
                   onChange={(e) => setServerIp(e.target.value)}
                   className="flex-1 bg-brand-bg border border-brand-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none"
-                  placeholder="217.154.81.50"
+                  placeholder="Enter IP address"
                 />
                 <button
-                  onClick={() => alert("DNS blacklist lookup performed. IP is fully clean!")}
-                  className="px-4 bg-brand-cyan text-brand-panel hover:bg-brand-cyan/95 text-xs font-extrabold rounded-lg cursor-pointer glow-cyan"
+                  onClick={handleLookupIp}
+                  disabled={checkingIp}
+                  className="px-4 bg-brand-cyan text-brand-panel hover:bg-brand-cyan/95 text-xs font-extrabold rounded-lg cursor-pointer glow-cyan disabled:opacity-50"
                 >
-                  Lookup IP
+                  {checkingIp ? 'Looking up...' : 'Lookup IP'}
                 </button>
               </div>
 
-              <div className="overflow-x-auto border border-brand-border/60 rounded-xl">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-brand-bg/50 border-b border-brand-border text-brand-text-bright font-bold">
-                      <th className="p-3">Blocklist Authority</th>
-                      <th className="p-3">Checked Node</th>
-                      <th className="p-3 text-right">Result</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-brand-border/40 font-mono text-brand-text">
-                    {[
-                      { auth: 'Spamhaus SBL-XBL', node: 'zen.spamhaus.org', res: 'CLEAN ✅' },
-                      { auth: 'Barracuda BRBL', node: 'b.barracudacentral.org', res: 'CLEAN ✅' },
-                      { auth: 'Spam Cop', node: 'bl.spamcop.net', res: 'CLEAN ✅' },
-                      { auth: 'Sorbs DUHL', node: 'dnsbl.sorbs.net', res: 'CLEAN ✅' }
-                    ].map((item, idx) => (
-                      <tr key={idx} className="hover:bg-brand-card/30">
-                        <td className="p-3 text-brand-text-bright font-bold">{item.auth}</td>
-                        <td className="p-3">{item.node}</td>
-                        <td className="p-3 text-brand-green font-bold text-right">{item.res}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              {checkingIp && (
+                <div className="text-center py-4">
+                  <RefreshCw className="w-5 h-5 animate-spin text-brand-cyan mx-auto" />
+                  <span className="text-xs text-brand-text block mt-2">Querying DNSBL servers...</span>
+                </div>
+              )}
+
+              {ipReputationResults && !ipReputationResults.error && (
+                <div className="space-y-3">
+                  {/* PTR / Reverse DNS */}
+                  {ipReputationResults.ptr && (
+                    <div className="bg-brand-bg/40 p-3 rounded-lg border border-brand-border/60">
+                      <span className="text-[10px] text-brand-text uppercase block font-bold">PTR Reverse Record</span>
+                      <span className="text-brand-cyan font-mono text-xs">{ipReputationResults.ptr}</span>
+                    </div>
+                  )}
+
+                  {/* DNS Records Summary */}
+                  {ipReputationResults.dns && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                      {Object.entries(ipReputationResults.dns).map(([key, val]) => (
+                        <div key={key} className="bg-brand-card p-2 rounded-lg border border-brand-border">
+                          <span className="text-brand-text/70 block text-[10px] uppercase">{key}</span>
+                          <strong className={`font-mono ${val === 'pass' ? 'text-brand-green' : val === 'fail' ? 'text-brand-red' : 'text-brand-orange'}`}>
+                            {typeof val === 'boolean' ? (val ? 'PASS' : 'FAIL') : val}
+                          </strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Reputation Score */}
+                  {ipReputationResults.reputation_score !== undefined && (
+                    <div className="bg-brand-card p-3 rounded-lg border border-brand-border/60 text-center">
+                      <span className="text-[10px] text-brand-text block uppercase font-bold">Reputation Score</span>
+                      <strong className={`text-2xl font-black font-mono ${ipReputationResults.reputation_score >= 70 ? 'text-brand-green' : ipReputationResults.reputation_score >= 40 ? 'text-brand-orange' : 'text-brand-red'}`}>
+                        {ipReputationResults.reputation_score}/100
+                      </strong>
+                    </div>
+                  )}
+
+                  {/* DNSBL / RBL Table */}
+                  <div className="overflow-x-auto border border-brand-border/60 rounded-xl">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-brand-bg/50 border-b border-brand-border text-brand-text-bright font-bold">
+                          <th className="p-3">Blocklist Authority</th>
+                          <th className="p-3">Checked Node</th>
+                          <th className="p-3 text-right">Result</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-brand-border/40 font-mono text-brand-text">
+                        {(ipReputationResults.rbl || ipReputationResults.blocklists || []).length > 0 ? (
+                          (ipReputationResults.rbl || ipReputationResults.blocklists || []).map((item, idx) => (
+                            <tr key={idx} className="hover:bg-brand-card/30">
+                              <td className="p-3 text-brand-text-bright font-bold">{item.auth || item.name || item.list}</td>
+                              <td className="p-3">{item.node || item.host || '-'}</td>
+                              <td className={`p-3 font-bold text-right ${item.listed ? 'text-brand-red' : 'text-brand-green'}`}>
+                                {item.listed ? `LISTED ${item.reason ? `(${item.reason})` : ''}` : 'CLEAN'}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan="3" className="p-4 text-center text-brand-text/50">No blocklist results available.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {ipReputationResults?.error && (
+                <div className="bg-brand-red/10 border border-brand-red/30 p-3 rounded-lg text-xs text-brand-red">
+                  Error: {ipReputationResults.error}
+                </div>
+              )}
             </div>
 
             <div className="text-right pt-2 border-t border-brand-border/60">
@@ -3753,7 +4021,7 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-4 text-xs">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-brand-green"></span>
-            <span className="font-semibold text-brand-text-bright">MoonMailer Pro Server Installer Platform — MoonMailer Group Ltd</span>
+            <span className="font-semibold text-brand-text-bright">PowerMM Pro Server Installer Platform — PowerMM Group Ltd</span>
           </div>
           <div className="flex items-center gap-4 font-mono text-brand-text/60">
             <span>Server Latency: 14ms</span>
