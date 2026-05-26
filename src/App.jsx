@@ -638,6 +638,7 @@ ${DEFAULT_HTML_BODY}`
   }
 
   const [sendingTestEmail, setSendingTestEmail] = useState(false)
+  const [testEmailTo, setTestEmailTo] = useState('')
   const [testEmailLogs, setTestEmailLogs] = useState([])
   const testEmailRef = useRef(null)
 
@@ -657,7 +658,7 @@ ${DEFAULT_HTML_BODY}`
         encryption: smtpEncryption,
         username: smtpUser,
         password: smtpPass,
-        to: 'baldr@proton.me',
+        to: testEmailTo || 'baldr@proton.me',
         subject: 'SMTP Test',
         body: `Your SMTP FROM ${smtpHost} is working.`
       })
@@ -2637,6 +2638,17 @@ ${getCompiledHtml()}`}
                           />
                         </div>
                       )}
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-brand-bg/20 border border-brand-border/60 rounded-lg px-3 py-1.5">
+                      <Mail className="w-3.5 h-3.5 text-brand-text" />
+                      <input
+                        type="text"
+                        value={testEmailTo}
+                        onChange={(e) => setTestEmailTo(e.target.value)}
+                        placeholder="recipient@example.com (leave empty for default)"
+                        className="flex-1 bg-transparent border-none text-xs text-white font-mono focus:outline-none placeholder:text-brand-text/40"
+                      />
                     </div>
 
                     <div className="flex gap-2.5 border-t border-brand-border/60 pt-4">
