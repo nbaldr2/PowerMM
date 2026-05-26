@@ -30,15 +30,18 @@ function emitEvent(eventName, data) {
  */
 async function processCampaignSend(job) {
   const { campaignId, userId, batchSize = 1000, speedMode = 'Normal',
-    resumeFromOffset = 0 } = job.data;
+    resumeFromOffset = 0, campaign: campaignData } = job.data;
 
   logger.info(`Worker: Starting campaign ${campaignId} (speed: ${speedMode})`);
   const speed = SPEED_CONFIGS[speedMode] || SPEED_CONFIGS.Normal;
 
-  // Fetch campaign
-  const { rows: campaignRows } = await q('SELECT * FROM campaigns WHERE id = $1', [campaignId]);
-  if (campaignRows.length === 0) throw new Error('Campaign not found');
-  const campaign = campaignRows[0];
+  // Fetch campaign from DB if not provided in job data (fallback)
+  let campaign = campaignData;
+  if (!campaign) {
+    const { rows: campaignRows } = await q('SELECT * FROM campaigns WHERE id = $1', [campaignId]);
+    if (campaignRows.length === 0) throw new Error('Campaign not found');
+    campaign = campaignRows[0];
+  }
 
   // Get suppression list
   const { rows: suppressions } = await q('SELECT email FROM suppression_list WHERE user_id = $1', [userId]);
@@ -56,6 +59,35 @@ async function processCampaignSend(job) {
   const startTime = Date.now();
 
   emitEvent('send:start', { campaignId, total: totalRecipients });
+
+  // Handle seed test (warmup) - send to seed addresses first
+  const seedSettings = campaign.seed_settings || {};
+  if (seedSettings.send_seed_test && seedSettings.seed_addresses && seedSettings.seed_addresses.length > 0) {
+    logger.info(`Campaign ${campaignId}: Sending seed test to ${seedSettings.seed_addresses.length} addresses`);
+    emitEvent('send:progress', { campaignId, sent: 0, failed: 0, total: totalRecipients, percent: 0, rate: 0, eta: 0, batchNum: 0, message: 'Sending seed test...' });
+    
+    for (const seedEmail of seedSettings.seed_addresses) {
+      try {
+        const seedRecipient = { email: seedEmail, email_user: seedEmail.split('@')[0], email_domain: seedEmail.split('@')[1] };
+        const smtp = campaign.smtp_server_id 
+          ? (await q('SELECT * FROM smtp_servers WHERE id = $1', [campaign.smtp_server_id])).rows[0]
+          : await pickSmtpFromPool(campaign.pool_name || 'default', userId);
+        
+        if (smtp) {
+          await buildAndSendEmail(campaign, seedRecipient, smtp);
+          await q(`INSERT INTO send_log (campaign_id, recipient_id, email, status) VALUES ($1,$2,$3,'seed_sent')`,
+            [campaignId, null, seedEmail]);
+        }
+      } catch (err) {
+        logger.warn(`Seed test failed for ${seedEmail}: ${err.message}`);
+      }
+      // Delay between seed sends
+      if (seedSettings.seed_delay_seconds > 0) {
+        await new Promise(r => setTimeout(r, seedSettings.seed_delay_seconds * 1000));
+      }
+    }
+    emitEvent('send:progress', { campaignId, sent: 0, failed: 0, total: totalRecipients, percent: 0, rate: 0, eta: 0, batchNum: 0, message: 'Seed test complete. Starting main send...' });
+  }
 
   // Process in batches
   while (offset < totalRecipients) {

@@ -131,16 +131,39 @@ router.post('/:id/send', authenticate, authorize('admin', 'operator'), checkQuot
     // Update status
     await query("UPDATE campaigns SET status = 'sending', started_at = NOW() WHERE id = $1", [campaign.id]);
 
-    // Enqueue BullMQ job
+    // Enqueue BullMQ job with full campaign data
     const batchSettings = campaign.batch_settings || {};
     await sendQueue.add('send-campaign', {
       campaignId: campaign.id,
       userId: req.user.id,
-      batchSize: batchSettings.batchSize || 1000,
-      speedMode: batchSettings.speedMode || 'Normal',
-      batchDelay: batchSettings.batchDelay || 100,
-      emailDelay: batchSettings.emailDelay || 10,
-      keepAlive: batchSettings.keepAlive !== false,
+      batchSize: batchSettings.batch_size || 1000,
+      speedMode: batchSettings.speed_mode || 'Normal',
+      batchDelay: batchSettings.batch_delay_ms || 100,
+      emailDelay: batchSettings.email_delay_ms || 10,
+      keepAlive: batchSettings.keep_alive !== false,
+      connectionPooling: batchSettings.connection_pooling !== false,
+      gcOptimize: batchSettings.gc_optimize !== false,
+      // Pass full campaign settings for the worker
+      campaign: {
+        id: campaign.id,
+        subject: campaign.subject,
+        from_email: campaign.from_email,
+        from_name: campaign.from_name,
+        reply_to: campaign.reply_to,
+        html_body: campaign.html_body,
+        text_body: campaign.text_body,
+        custom_headers: campaign.custom_headers,
+        redirect_url: campaign.redirect_url,
+        logo_url: campaign.logo_url,
+        list_id: campaign.list_id,
+        smtp_server_id: campaign.smtp_server_id,
+        pool_name: campaign.pool_name,
+        inbox_shield: campaign.inbox_shield,
+        content_randomizer: campaign.content_randomizer,
+        creative_engine: campaign.creative_engine,
+        batch_settings: campaign.batch_settings,
+        seed_settings: campaign.seed_settings,
+      }
     }, {
       attempts: 1,
       removeOnComplete: { count: 100 },
@@ -168,11 +191,32 @@ router.post('/:id/resume', authenticate, async (req, res) => {
     [req.params.id, req.user.id]);
   if (rows.length === 0) return res.status(404).json({ error: 'Campaign not found or not paused' });
 
+  const campaign = rows[0];
   await query("UPDATE campaigns SET status = 'sending' WHERE id = $1", [rows[0].id]);
   await sendQueue.add('send-campaign', {
     campaignId: rows[0].id, userId: req.user.id,
     resumeFromOffset: rows[0].last_processed_offset,
-    ...(rows[0].batch_settings || {}),
+    campaign: {
+      id: campaign.id,
+      subject: campaign.subject,
+      from_email: campaign.from_email,
+      from_name: campaign.from_name,
+      reply_to: campaign.reply_to,
+      html_body: campaign.html_body,
+      text_body: campaign.text_body,
+      custom_headers: campaign.custom_headers,
+      redirect_url: campaign.redirect_url,
+      logo_url: campaign.logo_url,
+      list_id: campaign.list_id,
+      smtp_server_id: campaign.smtp_server_id,
+      pool_name: campaign.pool_name,
+      inbox_shield: campaign.inbox_shield,
+      content_randomizer: campaign.content_randomizer,
+      creative_engine: campaign.creative_engine,
+      batch_settings: campaign.batch_settings,
+      seed_settings: campaign.seed_settings,
+    },
+    ...(campaign.batch_settings || {}),
   });
   res.json({ message: 'Campaign resumed' });
 });
