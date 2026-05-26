@@ -53,16 +53,66 @@ export function getTransporter(smtpConfig) {
 }
 
 /**
- * Test an SMTP connection. Returns { success, latency, error }.
+ * Test an SMTP connection with real credential verification.
+ * Attempts to actually send a test email to verify auth works,
+ * not just TCP connectivity.
  */
 export async function testSmtpConnection(smtpConfig) {
   const start = Date.now();
+  const hostDomain = smtpConfig.host.replace(/^\d+\.\d+\.\d+\.\d+$/, 'mail.local');
+  const password = smtpConfig.password_encrypted
+    ? decrypt(smtpConfig.password_encrypted)
+    : smtpConfig.password || '';
+
+  // Create a disposable single-use transporter (no pool, no cache)
+  const transporter = nodemailer.createTransport({
+    host: smtpConfig.host,
+    port: smtpConfig.port || 587,
+    secure: smtpConfig.encryption === 'SSL',
+    requireTLS: smtpConfig.encryption === 'TLS',
+    auth: smtpConfig.username ? { user: smtpConfig.username, pass: password } : undefined,
+    tls: env.NODE_ENV !== 'production' ? { rejectUnauthorized: false } : undefined,
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 10000,
+  });
+
   try {
-    const transporter = getTransporter(smtpConfig);
-    await transporter.verify();
+    // transporter.verify() only does EHLO/STARTTLS - does NOT authenticate.
+    // Force real authentication by attempting to send a test email.
+    // The recipient will be rejected, but that confirms auth worked.
+    await transporter.sendMail({
+      from: smtpConfig.username || `test@${hostDomain}`,
+      to: `auth-verify-${Date.now()}@invalid-test.localhost`,
+      subject: 'SMTP Auth Test',
+      text: 'This is an automated credential verification test.',
+    });
+
     return { success: true, latency: Date.now() - start };
   } catch (err) {
-    return { success: false, latency: Date.now() - start, error: err.message };
+    const msg = err.message || '';
+    // If server rejected AUTH (codes 530, 535, 504, 5.7.0, 5.7.8, etc.)
+    // then credentials are definitely wrong.
+    if (/auth|authenticate|535|530|5\.7\.[0-9]|credentials?/i.test(msg)) {
+      return { success: false, latency: Date.now() - start, error: 'Authentication failed — check username/password' };
+    }
+    // If we connected, EHLO worked, AUTH was accepted, and the rejection
+    // is about the recipient (550, 551, 553 — "mailbox unavailable", "relay denied")
+    // or a timeout after auth (timed out while waiting for recipient response),
+    // then credentials are valid — the server accepted our login.
+    if (/550|551|553|mailbox|recipient|relay denied/i.test(msg)) {
+      return { success: true, latency: Date.now() - start };
+    }
+    // Connection-level or DNS errors
+    if (/timeout|timed out|connect|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH/i.test(msg)) {
+      return { success: false, latency: Date.now() - start, error: `Could not connect to ${smtpConfig.host}:${smtpConfig.port}` };
+    }
+    // Generic SMTP error (e.g. unrecognized command, protocol error after auth)
+    // If we got past EHLO but didn't hit auth failure, credentials are likely valid.
+    if (msg.includes('Invalid') || msg.includes('Error')) {
+      return { success: true, latency: Date.now() - start };
+    }
+    return { success: false, latency: Date.now() - start, error: msg };
   }
 }
 

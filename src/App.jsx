@@ -580,10 +580,17 @@ ${DEFAULT_HTML_BODY}`
         username: smtpUser,
         password: smtpPass
       })
-      setSmtpStatusMessage({
-        type: 'success',
-        text: result.message || `Successfully authenticated with ${smtpHost}:${smtpPort}.`
-      })
+      if (result.success) {
+        setSmtpStatusMessage({
+          type: 'success',
+          text: result.message || `Successfully authenticated with ${smtpHost}:${smtpPort}.`
+        })
+      } else {
+        setSmtpStatusMessage({
+          type: 'error',
+          text: result.error || 'Authentication failed — check username/password'
+        })
+      }
     } catch (err) {
       setSmtpStatusMessage({
         type: 'error',
