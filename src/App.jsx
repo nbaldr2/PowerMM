@@ -3966,8 +3966,8 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
                       {Object.entries(ipReputationResults.dns).map(([key, val]) => (
                         <div key={key} className="bg-brand-card p-2 rounded-lg border border-brand-border">
                           <span className="text-brand-text/70 block text-[10px] uppercase">{key}</span>
-                          <strong className={`font-mono ${val === 'pass' ? 'text-brand-green' : val === 'fail' ? 'text-brand-red' : 'text-brand-orange'}`}>
-                            {typeof val === 'boolean' ? (val ? 'PASS' : 'FAIL') : val}
+                          <strong className={`font-mono text-[10px] ${val ? 'text-brand-green' : 'text-brand-text/50'}`}>
+                            {val ? (val.length > 30 ? val.substring(0, 30) + '...' : val) : 'Not found'}
                           </strong>
                         </div>
                       ))}
@@ -3975,11 +3975,11 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
                   )}
 
                   {/* Reputation Score */}
-                  {ipReputationResults.reputation_score !== undefined && (
+                  {ipReputationResults.reputationScore !== undefined && (
                     <div className="bg-brand-card p-3 rounded-lg border border-brand-border/60 text-center">
                       <span className="text-[10px] text-brand-text block uppercase font-bold">Reputation Score</span>
-                      <strong className={`text-2xl font-black font-mono ${ipReputationResults.reputation_score >= 70 ? 'text-brand-green' : ipReputationResults.reputation_score >= 40 ? 'text-brand-orange' : 'text-brand-red'}`}>
-                        {ipReputationResults.reputation_score}/100
+                      <strong className={`text-2xl font-black font-mono ${ipReputationResults.reputationScore >= 70 ? 'text-brand-green' : ipReputationResults.reputationScore >= 40 ? 'text-brand-orange' : 'text-brand-red'}`}>
+                        {ipReputationResults.reputationScore}/100
                       </strong>
                     </div>
                   )}
@@ -3995,13 +3995,13 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-brand-border/40 font-mono text-brand-text">
-                        {(ipReputationResults.rbl || ipReputationResults.blocklists || []).length > 0 ? (
-                          (ipReputationResults.rbl || ipReputationResults.blocklists || []).map((item, idx) => (
+                        {(ipReputationResults.blacklists || []).length > 0 ? (
+                          ipReputationResults.blacklists.map((item, idx) => (
                             <tr key={idx} className="hover:bg-brand-card/30">
-                              <td className="p-3 text-brand-text-bright font-bold">{item.auth || item.name || item.list}</td>
-                              <td className="p-3">{item.node || item.host || '-'}</td>
+                              <td className="p-3 text-brand-text-bright font-bold">{item.name}</td>
+                              <td className="p-3">{item.host}</td>
                               <td className={`p-3 font-bold text-right ${item.listed ? 'text-brand-red' : 'text-brand-green'}`}>
-                                {item.listed ? `LISTED ${item.reason ? `(${item.reason})` : ''}` : 'CLEAN'}
+                                {item.listed ? `LISTED ${item.result ? `(${item.result})` : ''}` : 'CLEAN'}
                               </td>
                             </tr>
                           ))
