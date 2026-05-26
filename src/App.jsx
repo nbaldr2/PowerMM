@@ -3926,6 +3926,7 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
             </div>
 
             <div className="space-y-3">
+              {/* IP Input */}
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -3941,6 +3942,18 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
                 >
                   {checkingIp ? 'Looking up...' : 'Lookup IP'}
                 </button>
+              </div>
+
+              {/* Domain Input for DNS records */}
+              <div className="flex items-center gap-2 bg-brand-bg/20 border border-brand-border/60 rounded-lg px-3 py-1.5">
+                <Globe className="w-3.5 h-3.5 text-brand-text" />
+                <input
+                  type="text"
+                  value={sendingDomain}
+                  onChange={(e) => setSendingDomain(e.target.value)}
+                  placeholder="Enter domain for SPF/DKIM/DMARC check (optional)"
+                  className="flex-1 bg-transparent border-none text-xs text-white font-mono focus:outline-none placeholder:text-brand-text/40"
+                />
               </div>
 
               {checkingIp && (
@@ -3985,16 +3998,16 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
                   )}
 
                   {/* DNSBL / RBL Table */}
-                  <div className="overflow-x-auto border border-brand-border/60 rounded-xl">
+                  <div className="overflow-x-auto border border-brand-border/60 rounded-xl max-h-80">
                     <table className="w-full text-left border-collapse text-xs">
-                      <thead>
+                      <thead className="sticky top-0 bg-brand-bg/50">
                         <tr className="bg-brand-bg/50 border-b border-brand-border text-brand-text-bright font-bold">
                           <th className="p-3">Blocklist Authority</th>
                           <th className="p-3">Checked Node</th>
                           <th className="p-3 text-right">Result</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-brand-border/40 font-mono text-brand-text">
+                      <tbody className="divide-y divide-brand-border/40 font-mono text-brand-text overflow-y-auto">
                         {(ipReputationResults.blacklists || []).length > 0 ? (
                           ipReputationResults.blacklists.map((item, idx) => (
                             <tr key={idx} className="hover:bg-brand-card/30">

@@ -125,16 +125,23 @@ router.post('/check', authenticate, async (req, res) => {
   // DNS records for domain
   let spf = null, dkim = null, dmarc = null, mx = null;
   const targetDomain = domain || ptr;
+  logger.info(`Checking DNS for domain: ${targetDomain} (IP: ${targetIp}, provided domain: ${domain}, PTR: ${ptr})`);
+  
   if (targetDomain) {
     // Clean domain (remove trailing dot if present)
     const cleanDomain = targetDomain.replace(/\.$/, '');
+    logger.info(`Clean domain: ${cleanDomain}`);
     
     // SPF - check TXT records for v=spf1 or spf2.0 (case insensitive)
     try { 
       const txts = await resolveTxt(cleanDomain); 
       const flatTxts = txts.flat();
+      logger.info(`SPF TXT records for ${cleanDomain}: ${JSON.stringify(flatTxts)}`);
       spf = flatTxts.find(t => /^v=spf[12]/i.test(t)) || flatTxts.find(t => t.toLowerCase().includes('spf'));
-    } catch {}
+      if (spf) logger.info(`Found SPF: ${spf.substring(0, 100)}`);
+    } catch (err) {
+      logger.warn(`SPF lookup failed for ${cleanDomain}: ${err.message}`);
+    }
     
     // DKIM - try multiple common selectors
     const dkimSelectors = ['dkim', 'default', 'mail', 'google', 'selector1', 'selector2', 'k1', 'key1'];
@@ -142,28 +149,80 @@ router.post('/check', authenticate, async (req, res) => {
       try { 
         const txts = await resolveTxt(`${selector}._domainkey.${cleanDomain}`); 
         const dkimRecord = txts.flat().join('');
+        logger.info(`DKIM ${selector}: ${dkimRecord.substring(0, 50)}...`);
         if (dkimRecord && dkimRecord.includes('p=')) {
           dkim = `Selector: ${selector} | ${dkimRecord.substring(0, 100)}...`;
           break;
         }
       } catch {}
     }
+    if (!dkim) logger.info(`No DKIM found for ${cleanDomain}`);
     
     // DMARC
     try { 
       const txts = await resolveTxt(`_dmarc.${cleanDomain}`); 
-      dmarc = txts.flat().find(t => /^v=DMARC1/i.test(t));
-    } catch {}
+      const flatTxts = txts.flat();
+      logger.info(`DMARC TXT records: ${JSON.stringify(flatTxts)}`);
+      dmarc = flatTxts.find(t => /^v=DMARC1/i.test(t));
+      if (dmarc) logger.info(`Found DMARC: ${dmarc}`);
+    } catch (err) {
+      logger.warn(`DMARC lookup failed: ${err.message}`);
+    }
     
-    // MX - format as readable string
+    // MX
     try { 
       const mxRecords = await resolveMx(cleanDomain);
+      logger.info(`MX records: ${JSON.stringify(mxRecords)}`);
       if (mxRecords && mxRecords.length > 0) {
-        // Sort by priority and format
         mxRecords.sort((a, b) => a.priority - b.priority);
         mx = mxRecords.map(r => `${r.exchange} (prio ${r.priority})`).join(', ');
       }
-    } catch {}
+    } catch (err) {
+      logger.warn(`MX lookup failed: ${err.message}`);
+    }
+  } else {
+    logger.warn('No target domain available for DNS lookup');
+  }
+    
+    // DKIM - try multiple common selectors
+    const dkimSelectors = ['dkim', 'default', 'mail', 'google', 'selector1', 'selector2', 'k1', 'key1'];
+    for (const selector of dkimSelectors) {
+      try { 
+        const txts = await resolveTxt(`${selector}._domainkey.${cleanDomain}`); 
+        const dkimRecord = txts.flat().join('');
+        logger.info(`DKIM ${selector}: ${dkimRecord.substring(0, 50)}...`);
+        if (dkimRecord && dkimRecord.includes('p=')) {
+          dkim = `Selector: ${selector} | ${dkimRecord.substring(0, 100)}...`;
+          break;
+        }
+      } catch {}
+    }
+    if (!dkim) logger.info(`No DKIM found for ${cleanDomain}`);
+    
+    // DMARC
+    try { 
+      const txts = await resolveTxt(`_dmarc.${cleanDomain}`); 
+      const flatTxts = txts.flat();
+      logger.info(`DMARC TXT records: ${JSON.stringify(flatTxts)}`);
+      dmarc = flatTxts.find(t => /^v=DMARC1/i.test(t));
+      if (dmarc) logger.info(`Found DMARC: ${dmarc}`);
+    } catch (err) {
+      logger.warn(`DMARC lookup failed: ${err.message}`);
+    }
+    
+    // MX
+    try { 
+      const mxRecords = await resolveMx(cleanDomain);
+      logger.info(`MX records: ${JSON.stringify(mxRecords)}`);
+      if (mxRecords && mxRecords.length > 0) {
+        mxRecords.sort((a, b) => a.priority - b.priority);
+        mx = mxRecords.map(r => `${r.exchange} (prio ${r.priority})`).join(', ');
+      }
+    } catch (err) {
+      logger.warn(`MX lookup failed: ${err.message}`);
+    }
+  } else {
+    logger.warn('No target domain available for DNS lookup');
   }
 
   // Calculate reputation score
