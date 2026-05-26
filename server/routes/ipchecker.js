@@ -180,48 +180,7 @@ router.post('/check', authenticate, async (req, res) => {
     } catch (err) {
       logger.warn(`MX lookup failed: ${err.message}`);
     }
-  } else {
-    logger.warn('No target domain available for DNS lookup');
-  }
-    
-    // DKIM - try multiple common selectors
-    const dkimSelectors = ['dkim', 'default', 'mail', 'google', 'selector1', 'selector2', 'k1', 'key1'];
-    for (const selector of dkimSelectors) {
-      try { 
-        const txts = await resolveTxt(`${selector}._domainkey.${cleanDomain}`); 
-        const dkimRecord = txts.flat().join('');
-        logger.info(`DKIM ${selector}: ${dkimRecord.substring(0, 50)}...`);
-        if (dkimRecord && dkimRecord.includes('p=')) {
-          dkim = `Selector: ${selector} | ${dkimRecord.substring(0, 100)}...`;
-          break;
-        }
-      } catch {}
-    }
-    if (!dkim) logger.info(`No DKIM found for ${cleanDomain}`);
-    
-    // DMARC
-    try { 
-      const txts = await resolveTxt(`_dmarc.${cleanDomain}`); 
-      const flatTxts = txts.flat();
-      logger.info(`DMARC TXT records: ${JSON.stringify(flatTxts)}`);
-      dmarc = flatTxts.find(t => /^v=DMARC1/i.test(t));
-      if (dmarc) logger.info(`Found DMARC: ${dmarc}`);
-    } catch (err) {
-      logger.warn(`DMARC lookup failed: ${err.message}`);
-    }
-    
-    // MX
-    try { 
-      const mxRecords = await resolveMx(cleanDomain);
-      logger.info(`MX records: ${JSON.stringify(mxRecords)}`);
-      if (mxRecords && mxRecords.length > 0) {
-        mxRecords.sort((a, b) => a.priority - b.priority);
-        mx = mxRecords.map(r => `${r.exchange} (prio ${r.priority})`).join(', ');
-      }
-    } catch (err) {
-      logger.warn(`MX lookup failed: ${err.message}`);
-    }
-  } else {
+    } else {
     logger.warn('No target domain available for DNS lookup');
   }
 
