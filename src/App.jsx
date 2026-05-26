@@ -663,18 +663,20 @@ ${DEFAULT_HTML_BODY}`
       })
       if (result.logs) {
         result.logs.forEach(log => setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`]))
+      } else if (result.success) {
+        setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ✅ SMTP is fully functional`])
       }
-      setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ✅ SMTP is fully functional`])
+      if (!result.success && !result.logs) {
+        setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ SMTP error: ${result.error}`])
+      }
     } catch (err) {
+      if (err.logs) {
+        err.logs.forEach(log => setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${log}`]))
+        return
+      }
       const msg = err.message || 'Unknown error'
       if (msg.includes('timeout') || msg.includes('timed out')) {
         setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Connection timed out. Check firewall/network.`])
-      } else if (msg.includes('DNS') || msg.includes('lookup') || msg.includes('gaierror')) {
-        setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ DNS lookup failed. Check server address.`])
-      } else if (msg.includes('auth') || msg.includes('Authentication')) {
-        setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Authentication failed. Check username/password.`])
-      } else if (msg.includes('connect') || msg.includes('Connection')) {
-        setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Could not connect to server. Check port/host.`])
       } else {
         setTestEmailLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ SMTP error: ${msg}`])
       }

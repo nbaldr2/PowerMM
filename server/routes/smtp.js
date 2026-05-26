@@ -1,3 +1,4 @@
+import nodemailer from 'nodemailer';
 import { Router } from 'express';
 import { query } from '../config/database.js';
 import { authenticate, authorize, checkQuota } from '../middleware/auth.js';
@@ -5,6 +6,7 @@ import { validate, schemas } from '../middleware/validate.js';
 import { encrypt, decrypt } from '../utils/encryption.js';
 import { testSmtpConnection } from '../services/email.js';
 import logger from '../utils/logger.js';
+import env from '../config/env.js';
 
 const router = Router();
 
@@ -126,6 +128,54 @@ router.get('/pools', authenticate, async (req, res) => {
     [req.user.id]
   );
   res.json({ pools: rows });
+});
+
+// POST /smtp/test-send — send a test email and return detailed logs
+router.post('/test-send', authenticate, async (req, res) => {
+  const { host, port, encryption, username, password, to, subject, body } = req.body;
+  const logs = [`Connecting to ${host}:${port}...`];
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host,
+      port: port || 587,
+      secure: encryption === 'SSL',
+      requireTLS: encryption === 'TLS',
+      auth: username ? { user: username, pass: password || '' } : undefined,
+      tls: env.NODE_ENV !== 'production' ? { rejectUnauthorized: false } : undefined,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+    });
+
+    logs.push(`Authenticating as ${username || 'anonymous'}...`);
+
+    const info = await transporter.sendMail({
+      from: username || `test@${host}`,
+      to: to || 'baldr@proton.me',
+      subject: subject || 'SMTP Test',
+      text: body || `Your SMTP FROM ${host} is working.`,
+    });
+
+    logs.push(`Message sent: ${info.messageId}`);
+    logs.push('✅ SMTP is fully functional');
+
+    return res.json({ success: true, messageId: info.messageId, logs });
+  } catch (err) {
+    const msg = err.message || 'Unknown error';
+    if (msg.includes('timeout') || msg.includes('Timed out')) {
+      logs.push('❌ Connection timed out. Check firewall/network.');
+    } else if (msg.includes('DNS') || msg.includes('dns') || msg.includes('ENOTFOUND')) {
+      logs.push('❌ DNS lookup failed. Check server address.');
+    } else if (msg.includes('auth') || msg.includes('Authentication') || msg.includes('AUTH')) {
+      logs.push('❌ Authentication failed. Check username/password.');
+    } else if (msg.includes('connect') || msg.includes('Connection') || msg.includes('ECONNREFUSED')) {
+      logs.push('❌ Could not connect to server. Check port/host.');
+    } else {
+      logs.push(`❌ SMTP error: ${msg}`);
+    }
+    return res.status(200).json({ success: false, error: msg, logs });
+  }
 });
 
 export default router;
