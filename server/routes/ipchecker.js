@@ -126,10 +126,44 @@ router.post('/check', authenticate, async (req, res) => {
   let spf = null, dkim = null, dmarc = null, mx = null;
   const targetDomain = domain || ptr;
   if (targetDomain) {
-    try { const txts = await resolveTxt(targetDomain); spf = txts.flat().find(t => t.startsWith('v=spf1')); } catch {}
-    try { const txts = await resolveTxt(`dkim._domainkey.${targetDomain}`); dkim = txts.flat().join(''); } catch {}
-    try { const txts = await resolveTxt(`_dmarc.${targetDomain}`); dmarc = txts.flat().find(t => t.startsWith('v=DMARC1')); } catch {}
-    try { mx = await resolveMx(targetDomain); } catch {}
+    // Clean domain (remove trailing dot if present)
+    const cleanDomain = targetDomain.replace(/\.$/, '');
+    
+    // SPF - check TXT records for v=spf1 or spf2.0 (case insensitive)
+    try { 
+      const txts = await resolveTxt(cleanDomain); 
+      const flatTxts = txts.flat();
+      spf = flatTxts.find(t => /^v=spf[12]/i.test(t)) || flatTxts.find(t => t.toLowerCase().includes('spf'));
+    } catch {}
+    
+    // DKIM - try multiple common selectors
+    const dkimSelectors = ['dkim', 'default', 'mail', 'google', 'selector1', 'selector2', 'k1', 'key1'];
+    for (const selector of dkimSelectors) {
+      try { 
+        const txts = await resolveTxt(`${selector}._domainkey.${cleanDomain}`); 
+        const dkimRecord = txts.flat().join('');
+        if (dkimRecord && dkimRecord.includes('p=')) {
+          dkim = `Selector: ${selector} | ${dkimRecord.substring(0, 100)}...`;
+          break;
+        }
+      } catch {}
+    }
+    
+    // DMARC
+    try { 
+      const txts = await resolveTxt(`_dmarc.${cleanDomain}`); 
+      dmarc = txts.flat().find(t => /^v=DMARC1/i.test(t));
+    } catch {}
+    
+    // MX - format as readable string
+    try { 
+      const mxRecords = await resolveMx(cleanDomain);
+      if (mxRecords && mxRecords.length > 0) {
+        // Sort by priority and format
+        mxRecords.sort((a, b) => a.priority - b.priority);
+        mx = mxRecords.map(r => `${r.exchange} (prio ${r.priority})`).join(', ');
+      }
+    } catch {}
   }
 
   // Calculate reputation score
