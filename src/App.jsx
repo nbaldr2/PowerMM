@@ -889,10 +889,12 @@ ${DEFAULT_HTML_BODY}`
   }
 
   const handleLookupIp = async () => {
+    const cleanedIp = serverIp.trim()
+    setServerIp(cleanedIp)
     setCheckingIp(true)
     setIpReputationResults(null)
     try {
-      const result = await api.checkIpReputation(serverIp, sendingDomain)
+      const result = await api.checkIpReputation(cleanedIp, sendingDomain)
       setIpReputationResults(result)
     } catch (err) {
       setIpReputationResults({
@@ -3942,18 +3944,6 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
                 >
                   {checkingIp ? 'Looking up...' : 'Lookup IP'}
                 </button>
-              </div>
-
-              {/* Domain Input for DNS records */}
-              <div className="flex items-center gap-2 bg-brand-bg/20 border border-brand-border/60 rounded-lg px-3 py-1.5">
-                <Globe className="w-3.5 h-3.5 text-brand-text" />
-                <input
-                  type="text"
-                  value={sendingDomain}
-                  onChange={(e) => setSendingDomain(e.target.value)}
-                  placeholder="Enter domain for SPF/DKIM/DMARC check (optional)"
-                  className="flex-1 bg-transparent border-none text-xs text-white font-mono focus:outline-none placeholder:text-brand-text/40"
-                />
               </div>
 
               {checkingIp && (
