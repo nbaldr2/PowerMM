@@ -2,10 +2,14 @@ import { Worker } from 'bullmq';
 import Redis from 'ioredis';
 import pg from 'pg';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
 import { buildAndSendEmail, pickSmtpFromPool, closeAllTransporters } from '../services/email.js';
 import logger from '../utils/logger.js';
 
-dotenv.config({ path: '../.env' });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+dotenv.config({ path: resolve(__dirname, '../../.env') });
 
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', { maxRetriesPerRequest: null });
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://powermm:powermm_secret@localhost:5432/powermm' });
