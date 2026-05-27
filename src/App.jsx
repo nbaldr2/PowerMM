@@ -3911,7 +3911,7 @@ smtp-listener 127.0.0.0/8:{{ smtp_port }}
          --------------------------------------------------------- */}
       {showIpChecker && (
         <div className="fixed inset-0 z-50 bg-brand-bg/85 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-brand-panel border border-brand-border rounded-2xl w-full max-w-2xl shadow-2xl p-5 space-y-4">
+          <div className="bg-brand-panel border border-brand-border rounded-2xl w-full max-w-2xl shadow-2xl p-5 space-y-4 max-h-[80vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-brand-border/60 pb-3">
               <div className="flex items-center gap-2">
                 <Globe className="w-5 h-5 text-brand-cyan" />
